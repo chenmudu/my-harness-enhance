@@ -1,0 +1,29 @@
+{
+  "name": "my-harness-enhance",
+  "version": "0.2.0",
+  "description": "A harness-agnostic personal enhancement layer for long-horizon agent work: one conductor, shared briefs, deterministic checks, and user-level state.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "bin": {
+    "mhe": "./bin/mhe.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "bench": "node bin/mhe.mjs bench",
+    "demo": "node bin/mhe.mjs demo",
+    "doctor": "node bin/mhe.mjs doctor"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "overlays",
+    "README.md",
+    "INSTALL.md",
+    "LICENSE"
+  ]
+}

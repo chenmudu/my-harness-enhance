@@ -1,0 +1,51 @@
+# my-harness-enhance
+
+> 英文版本见 [README.md](README.md)。
+
+**一个面向长周期任务的、跨 harness 的个人增强层。**
+
+它让主会话保持唯一的 conductor：主模型只判断、路由、验收、综合；调研、执行、验证、起草交给隔离的原生 worker。持久状态放在 workspace 之外，共享 brief + 确定性检查替代“先全部执行，再做一次 LLM 全量审计”的昂贵循环。
+
+它不是 harness 替代品，也不是多 agent 框架。它在原生 harness 之上加控制面、个人 agent overlay 和确定性验证。目标不是单纯缩小 context，而是让长周期任务比单会话全包更快、更可靠。
+
+## 它不是什么
+
+- 不是新的 agent 框架，也不是 agent 社会。
+- 不是 Qoder 专用工具：Qoder 是第一个验证通过的 adapter；ZCode 是第二个；Codex、DSH 及其他常用 agent harness 是 adapter 目标。
+- 不是目标仓库模板：状态和个人 agent 永不写入正在工作的项目仓库。
+
+## 核心模型
+
+- **一个 conductor**：唯一决策者；worker 隔离、无状态、不协商。
+- **fan-out 前先有 brief**：术语表、格式、输入 hash、ownership、检查项共享给每个 worker。
+- **验收前先检查**：结构、数字、hash、scope、测试检查由代码完成；全量语义审计只在失败或歧义时触发。
+- **状态在 workspace 之外**：运行时状态在 `~/.my-harness-enhance/`；个人 agent 在 repo/用户级 overlay，安装到用户级 harness 配置。
+
+## Adapter
+
+- **Qoder**：第一个验证通过的 adapter（hooks、MCP、原生 subagent）。
+- **ZCode**：第二个 adapter；原生 subagent、hooks、MCP、conductor 注入。支持项目级和全局模式；`reason` 使用内置 `Explore` 的只读兼容模式（ZCode 没有 no-tools agent）；派发时必须内嵌 worker contract，并用 synthetic job 补偿缺失的 SubagentStop。原生没有 result rewrite。
+- **Codex、DSH 及其他常用 agent harness**：adapter 目标。核心 contract、brief、检查和状态与 harness 无关。
+- Adapter 契约与能力矩阵：[docs/adapters.md](docs/adapters.md)。Qoder 专属细节在 [docs/qoder-adapter.md](docs/qoder-adapter.md)；它描述第一个 adapter，不是仓库边界。
+
+## 状态
+
+- **202/202 测试通过**。
+- Qoder 已在只读、写、验证会话上端到端验证。
+- ZCode adapter 已实现项目级和全局模式；`reason` 使用只读 Explore 兼容模式，worker contract 强制内嵌，synthetic job 补偿 SubagentStop。原生仍没有 result rewrite/SubagentStop/PreCompact。
+- 待验证：相对单会话全包的真实 wall-clock 对比、并发代码集成冲突、长周期压缩、Codex/DSH adapter。
+
+## 文档
+
+- [INSTALL.md](INSTALL.md) — Qoder 与 ZCode 安装及回滚 runbook。
+- [docs/architecture.md](docs/architecture.md) — 架构与不变量。
+- [docs/adapters.md](docs/adapters.md) — adapter 契约与能力矩阵。
+- [docs/worktrees.md](docs/worktrees.md) — 代码任务的隔离 git worktree。
+- [docs/brief-checks.md](docs/brief-checks.md) — 共享 brief 与确定性检查。
+- [overlays/README.md](overlays/README.md) — 个人 agent overlay 与安全安装/卸载。
+- [docs/roadmap.md](docs/roadmap.md) — adapter 与运行时路线图。
+- [docs/validation.md](docs/validation.md) — 本机验证记录。
+
+## License
+
+MIT

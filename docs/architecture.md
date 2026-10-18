@@ -1,0 +1,229 @@
+# Architecture
+
+> Chinese version: [architecture.zh-CN.md](architecture.zh-CN.md).
+
+## 1. Problem
+
+A single agent session in a long-horizon task spends most of its attention on
+execution details: raw tool output, its own reasoning traces, tool/MCP schemas,
+stale plans, repeated reads, and failed attempts. The model's context grows, but
+the useful signal does not. The failure modes are goal drift, repetition, lost
+constraints, and "context rot" long before the window is full.
+
+The fix is not a bigger window and not a smarter summary of the same transcript.
+The fix is to change what the main model sees each turn:
+
+- keep a small control plane in the main context;
+- move execution and investigation into isolated worker contexts;
+- return only a bounded, structured result;
+- keep the durable state outside the transcript.
+
+## 2. Five layers
+
+### 2.1 Economic layer: who pays, who works
+
+The structural invariant is **one decision-maker + many execution contexts**.
+Cost is a policy on top of that structure, not part of it.
+
+Default policy:
+
+- paid, strong model = conductor (judgment, routing, acceptance, synthesis);
+- free/cheap, capable model = worker (investigation, execution, verification,
+  drafting); on Qoder, `qfmodel` (Qwen3.8-Flash) is the default worker;
+- critical verification or hard subtasks may escalate to a paid worker;
+- privacy-sensitive tasks may run on a local model.
+
+Every worker profile declares a cost/capability profile: cost tier, model,
+context limit, tool set, latency, reliability. The conductor picks the cheapest
+worker that meets the task's capability bar. Do not hardcode "model A always
+does X".
+
+Free workers have risks: rate limits, weaker tool reliability, context limits,
+and hidden policy filters. The layer must have fallback (paid/local worker) and
+result validation. Final judgment never belongs to a free worker.
+
+### 2.2 Topology layer: where context lives
+
+Four topologies, one contract:
+
+| Topology | Use when | Main cost | Notes |
+|---|---|---|---|
+| Same-session subagent | default | lowest | isolated context; parent sees result only |
+| Nested subagents (tree/DAG) | future; not enabled in v0.2 | depth x latency | requires explicit depth/fan-out enforcement; every level returns a bounded result |
+| Same-harness, multi-model/multi-session | long-running, different model/permission/sandbox, survive main session | transport + sync | Qoder cross-session is Windows-unsupported; ZCode has no arbitrary bus; fall back to subagents |
+| Cross-harness multi-agent | another harness has a unique capability/model/tool | highest | last resort; uniform transport contract; not in v0.1 |
+
+The uniform primitive is:
+
+```
+delegate(task, refs, schema, mode) -> job_id
+status(job_id) -> state
+result(job_id) -> envelope
+send(job_id, message) -> ack        (if bidirectional)
+cancel(job_id)
+```
+
+The main model sees `delegate`, never the worker's transcript.
+
+**Depth is a tool, not a goal.** Every extra level adds latency, cost, and error
+propagation. v0.2 enforces one level: workers may not use `Agent`/`Task`; a
+worker that needs a split returns `needs_split` with a proposed child graph, and
+the conductor decides. Nested workers are a future topology, not a currently
+advertised guardrail; if introduced, depth/fan-out must be enforced in code.
+
+### 2.3 Harness layer: use native primitives
+
+Do not reimplement what the harness already provides. The adapter maps the
+contract to native mechanisms.
+
+| Capability | Qoder | ZCode | Codex | DSH |
+|---|---|---|---|---|
+| Restrict main tools | `PreToolUse` deny (auto; native main keeps full schema) | `--disallowed-tools` | agent role/tool policy (partial) | `ctx.tools.restrict` |
+| Isolated workers | subagents, separate transcript/compression | `Agent` subagents | `spawn_agent` + threads | subagent plugin |
+| Worker result only | parent sees result, not transcript | `Agent` final message | parent final message | delegate result |
+| Rewrite tool output | `PostToolUse.updatedToolOutput` | `additionalContext` only | hooks (partial) | tool pipeline |
+| Validate worker stop | `SubagentStop` | no `SubagentStop` | subagent stop hooks | `outputSchema` |
+| Inject at compaction | `PreCompact`/`PostCompact` + `SessionStart(compact)` | `SessionStart(compact)` | pre/post compact hooks | compaction seam |
+| Headless / SDK | `qoder -p`, Agent SDK | `-p`, app-server | `codex exec`, SDK | `dsh --profile headless`, SDK/ACP |
+| Free worker model | `qfmodel` (Qwen3.8-Flash) | provider-dependent | paid/Responses | model-agnostic |
+
+Rules:
+
+- Prefer deterministic enforcement (hook/flag/schema) over prompt compliance.
+- Respect the harness's sandbox, permissions, and platform limits.
+- If a capability is missing, degrade gracefully:
+  - no output rewrite -> conductor-side normalization/truncation;
+  - no `SubagentStop` validation -> conductor parses and re-delegates;
+  - no cross-session -> use subagents.
+- Write a capability descriptor per adapter. The conductor policy can then choose
+  topology from capabilities, not from harness names.
+
+#### Activation (Qoder v0.2)
+
+- Global auto mode: install once per machine; the first **new** session in any
+  workspace auto-registers it (SessionStart startup/new/clear). Already-running
+  sessions are not retrofitted. Every main session in a registered workspace is
+  the conductor; no agent/model selection.
+- Project-scoped auto mode: install a single project explicitly; it registers
+  immediately. Useful for strict control or per-project fallback agents.
+- Hooks inject the policy and deny non-conductor tools. The native main agent
+  keeps its full tool schema; the saving is in messages/tool results and worker
+  context, not static schema.
+- Reuse-first: official `general-purpose`/`Explore`; `mhe-reasoner` is the only
+  no-tools fallback. The old `reasoner` and `env-runner` are not selected.
+  Only a missing capability installs an `mhe-*` fallback.
+- Workers are leaves: `PreToolUse` denies `Agent`/`Task` for every worker,
+  including `general-purpose`. The conductor is the only router.
+- Only conductor sessions and mapped native workers write capsule/jobs/audit
+  logs. Unrelated sessions outside registered projects are dormant.
+
+### 2.4 Contract layer: invariants vs implementation details
+
+**Invariants (all harnesses):**
+
+1. One decision-maker; workers are stateless, goal-less, and do not negotiate.
+2. Main context = goal/constraints + task graph/routing table + result
+   summaries + decisions. No raw tool output, worker reasoning, or transcript.
+3. Worker result = bounded envelope with status, summary, evidence, artifacts,
+   open questions, next step, needs_split, data, cost, confidence.
+4. Progress = status + milestones; failures = structured errors;
+   `enhance_recall(handle)` for bounded drill-down.
+5. Coarse decomposition in the conductor; fine task graph proposed by a planner
+   worker and approved by the conductor.
+6. Cost/capability routing; cheapest qualified worker.
+7. Deterministic enforcement before prompt guidance.
+
+**Implementation details (per harness):**
+
+skills, AGENTS.md, MCP servers, hook scripts, agent definitions, workflows,
+goal/plan primitives, session storage. They are just *how* an invariant is
+implemented. Do not mistake a mechanism for the architecture.
+
+### 2.5 Operations layer: stability, efficiency, fit, proof
+
+**Stability:**
+
+- hooks/flags/schema for critical boundaries;
+- per-project lock around read-modify-write state; atomic writes;
+- leaf-worker enforcement in v0.2 (Agent/Task denied);
+- if nested workers are introduced, max depth, max fan-out, per-node
+  token/time/tool budget;
+- failure fallback (paid/local worker);
+- observability: job id/tree, hook log, costs.
+
+**Efficiency:**
+
+- conductor calls few and small; workers free/parallel;
+- tool schema pruning (conductor exposes ~13 tools, not 36+);
+- stable prefix / KV cache;
+- artifact reuse, content-addressed dedupe;
+- choose topology by task complexity: simple task -> one worker; no tree.
+
+**Fit:**
+
+- use native primitives; respect platform limits;
+- degrade instead of fighting the harness;
+- keep the state format harness-independent (JSON/Markdown).
+
+**Proof:**
+
+- baseline vs conductor: main context tokens, composition, worker calls, task
+  success, acceptance failures, human interventions, cost/latency;
+- needle tests for goal/constraint retention;
+- compaction fidelity A/B;
+- if the conductor becomes a rubber stamp, validation/evidence design failed;
+- if the tree is too deep or calls explode, granularity/routing failed.
+
+## 3. State model
+
+User-level state (nothing in the project repo):
+
+```
+~/.my-harness-enhance/
+  projects.json                    project path -> state dir
+  projects/<hash>/
+    config.json                    conductor mode, capabilities, logging
+    capabilities.json              resolved role -> native agent mapping
+    goal.json                      canonical goal, acceptance, constraints
+    plan.json                      task graph
+    decisions.jsonl                append-only decisions
+    jobs.json                      job status, agent id/type/role, envelope summary
+    session.json                   current session role/model/source
+    capsule.md                     compact state injected into the conductor
+    artifacts/                     content-addressed raw evidence
+    metrics.jsonl                  hook/routing metrics
+    logs/                          errors-only by default
+  legacy/                          migrated old .router dirs
+```
+
+The state store is the source of truth. The transcript is not.
+
+`capsule.md` is the compact state injected into the conductor; `jobs.json` is the
+routing table; `logs/hooks.jsonl` is optional (errors-only by default) and
+contains no prompts or raw outputs; `artifacts/` holds raw evidence. These are
+created only for conductor sessions and mapped native workers, not for unrelated
+sessions.
+
+## 4. Hooks (Qoder adapter)
+
+| Event | Role |
+|---|---|
+| `SessionStart` | detect conductor session; inject policy + capsule; on compact/resume re-inject |
+| `UserPromptSubmit` | set first goal; journal follow-ups; re-inject capsule |
+| `PreToolUse` | conductor tool allowlist; native worker policy by agent type (readonly/leaf/notools/lead); subagent allowlist |
+| `SubagentStart` | create job; inject role + worker contract + goal/acceptance |
+| `SubagentStop` | parse/store envelope; update job |
+| `PostToolUse` | normalize `Agent` result to compact envelope; capture large worker tool output |
+| `PreCompact` | regenerate capsule from state (not from transcript) |
+| `Stop` | write capsule; block completion while a code worktree is unlanded |
+
+The key design choice: **compaction is deterministic and state-based**. It does
+not ask the already-degraded main model to summarize its own transcript.
+
+## 5. What this is not
+
+- It is not a multi-agent society. There is one decision-maker.
+- It is not a cross-harness orchestrator in v0.2. One harness, one adapter.
+- It is not a prompt-only convention. Hooks enforce the boundary.
+- It is not a replacement for the harness's native subagents. It is a policy
+  and contract layer on top of them.

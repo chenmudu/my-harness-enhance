@@ -1,0 +1,5 @@
+node_modules/
+.router/
+*.log
+.DS_Store
+coverage/
