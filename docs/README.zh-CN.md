@@ -24,7 +24,7 @@
 - 围栏内的代码、命令、JSON 和标识符在两版中逐字一致，不翻译。
 - 每个页面描述当前 commit；`validation.md` 是带日期的记录，不是规范。
 - 个人笔记在 `docs/others/`，被 gitignore；它们不是仓库文档。
-- 仓库不强制行尾；`core.autocrlf` 可能在检出时重写工作区文件。
+- 行尾由 `.gitattributes` 固定为 LF；只有文件确实需要 CRLF 时才加按路径的例外。
 
 ## 验证
 

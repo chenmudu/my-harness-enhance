@@ -1,0 +1,3 @@
+# Repository text is LF in the index and on checkout. Add a per-path override
+# below only when a file genuinely needs CRLF; none do today.
+* text=auto eol=lf

@@ -24,7 +24,7 @@ This page is the index and authority order for the repository documentation. Whe
 - Fenced code, commands, JSON, and identifiers are verbatim in both languages. Do not translate them.
 - A page describes the current commit. `validation.md` is a dated record, not a specification.
 - Personal notes live in `docs/others/` and are gitignored. They are not repository documentation.
-- Line endings are not enforced by the repository; `core.autocrlf` may rewrite worktree files on checkout.
+- Line endings are fixed to LF by `.gitattributes`; add a per-path override only when a file genuinely needs CRLF.
 
 ## Verify
 
