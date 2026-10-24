@@ -53,6 +53,10 @@ import { createWorktree, removeWorktree } from '../src/core/worktree.mjs';
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-zcode-home-'),
 );
+// Keep the suite hermetic when an ambient hook/MCP parent leaks these vars.
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, '..', 'src', 'adapters', 'zcode', 'hook.mjs');
@@ -101,10 +105,14 @@ function ourEntriesFor(config, event) {
 }
 
 function runHook(root, event, payload = {}) {
+  const env = { ...process.env };
+  delete env.MY_HARNESS_ENHANCE_PROJECT;
+  delete env.MY_HARNESS_ENHANCE_SESSION;
+  delete env.MY_HARNESS_ENHANCE_GLOBAL;
   const result = spawnSync(process.execPath, [HOOK, event], {
     input: JSON.stringify({ cwd: root, ...payload }),
     cwd: root,
-    env: { ...process.env, MY_HARNESS_ENHANCE_PROJECT: '' },
+    env,
     encoding: 'utf8',
   });
   return { stdout: result.stdout || '', stderr: result.stderr || '', status: result.status };

@@ -12,6 +12,7 @@ import {
   readJobs,
   readPlan,
   readWorktrees,
+  resolveSessionId,
   updatePlanTask,
   upsertJob,
   writeBrief,
@@ -34,6 +35,11 @@ const PROJECT_PROP = {
   description: 'Workspace root or any path inside it. Use the PROJECT value from the capsule.',
 };
 
+const SESSION_PROP = {
+  type: 'string',
+  description: 'Session shard id. Use the SESSION value from the capsule when the workspace has multiple sessions.',
+};
+
 const SERVER_STARTED_AT = new Date().toISOString();
 
 function textResult(text, isError = false) {
@@ -47,7 +53,7 @@ function jsonResult(value, isError = false) {
   return textResult(JSON.stringify(value, null, 2), isError);
 }
 
-function contextFor(args = {}) {
+function contextFor(args = {}, { tolerateAmbiguity = false } = {}) {
   // Resolve from the call, the server env, or the server's cwd. Do not use the
   // global active.json here: two workspaces can be open at the same time and
   // the active file would make one session read another's state.
@@ -67,14 +73,33 @@ function contextFor(args = {}) {
   if (!exists) {
     throw new Error(`workspace has no enhancement state: ${candidate}`);
   }
-  return { root: project.projectRoot, config };
+  // Session resolution order: explicit argument, server env, the most recent
+  // sessions.json entry for this host process, then a unique session dir.
+  // No session (legacy single-session install) keeps project-level state.
+  let session = '';
+  try {
+    session = resolveSessionId(project.projectRoot, {
+      explicit: args.session || process.env.MY_HARNESS_ENHANCE_SESSION || '',
+      hostPid: process.ppid,
+    });
+  } catch (error) {
+    // Project-level tools (decide/capabilities/artifact/contract) stay usable
+    // even when no single shard can be inferred; session state tools surface
+    // the ambiguity so the conductor passes the SESSION value.
+    if (!tolerateAmbiguity) throw error;
+  }
+  return { root: project.projectRoot, config, session };
 }
 
 const TOOLS = [
   {
     name: 'enhance_state',
     description: 'Return the compact conductor capsule for a workspace: goal, acceptance, constraints, plan, active jobs, worker mapping, decisions, artifacts.',
-    inputSchema: { type: 'object', properties: { project: PROJECT_PROP }, additionalProperties: false },
+    inputSchema: {
+      type: 'object',
+      properties: { project: PROJECT_PROP, session: SESSION_PROP },
+      additionalProperties: false,
+    },
   },
   {
     name: 'enhance_goal',
@@ -83,6 +108,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         text: { type: 'string' },
         acceptance: { type: 'array', items: { type: 'string' } },
         constraints: { type: 'array', items: { type: 'string' } },
@@ -98,6 +124,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         profile: { type: 'string', enum: ['general', 'docs', 'code', 'research', 'ops'] },
         inputs: { type: 'array', items: { type: 'string' } },
         pairs: {
@@ -137,6 +164,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         tasks: {
           type: 'array',
           items: {
@@ -180,6 +208,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         action: { type: 'string', enum: ['list', 'get', 'update', 'cancel'] },
         job_id: { type: 'string' },
         status: { type: 'string' },
@@ -196,6 +225,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         checkers: { type: 'array', items: { type: 'string' } },
         task_ids: { type: 'array', items: { type: 'string' } },
         worktree: {
@@ -208,11 +238,12 @@ const TOOLS = [
   },
   {
     name: 'enhance_worktree',
-    description: 'Isolated git worktrees per code task: create (requires a planned task_id whose depends_on tasks are all completed and a clean repo; returns prompt_prefix with the exact task_id/worktree lines), list, diff (bounded patch; committed work included), land (apply committed, staged, unstaged and untracked work onto a clean base checkout; runs the brief checks against the base by default and reverts the base on failure, keeping the worktree for a re-land; commit=true creates one "harness: land <task_id>" commit, opt-in; on success marks the task completed and resets the worktree for removal), remove (discard=true only after landing). Worktrees live under ~/.my-harness-enhance/worktrees.',
+    description: 'Isolated git worktrees per code task: create (requires a planned task_id whose depends_on tasks are all completed and a clean repo; returns prompt_prefix with the exact task_id/worktree lines), list, diff (bounded patch; committed work included), land (apply committed, staged, unstaged and untracked work onto a clean base checkout; runs the brief checks against the base by default and reverts the base on failure, keeping the worktree for a re-land; commit=true creates one "harness: land <task_id>" commit, opt-in; on success marks the task completed and resets the worktree for removal), remove (discard=true only after landing). Worktrees live under ~/.my-harness-enhance/worktrees/<projectKey>/<sessionKey>/<taskId>.',
     inputSchema: {
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         action: { type: 'string', enum: ['create', 'list', 'diff', 'land', 'remove'] },
         task_id: { type: 'string', description: 'Plan task id. Required for create, diff, land, and remove.' },
         run_checks: {
@@ -283,45 +314,46 @@ const TOOLS = [
 ];
 
 function toolEnhanceState(args = {}) {
-  const { root, config } = contextFor(args);
-  const capsule = buildCapsule(root, { maxTokens: config.context.maxCapsuleTokens });
+  const { root, config, session } = contextFor(args);
+  const capsule = buildCapsule(root, { maxTokens: config.context.maxCapsuleTokens, session });
   return textResult(capsule || '(empty state)');
 }
 
 function toolEnhanceGoal(args = {}) {
-  const { root } = contextFor(args);
+  const { root, session } = contextFor(args);
   const goal = writeGoal(root, {
     text: args.text || args.goal || '',
     acceptance: args.acceptance || [],
     constraints: args.constraints || [],
     replace: Boolean(args.replace),
-  });
+  }, session);
   return jsonResult(goal);
 }
 
 function toolEnhanceBrief(args = {}) {
-  const { root, config } = contextFor(args);
+  const { root, config, session } = contextFor(args);
   const hasPatch = ['profile', 'inputs', 'pairs', 'glossary', 'ownership', 'checks', 'notes']
     .some((key) => key in args);
-  const current = readBrief(root);
+  const current = readBrief(root, session);
   if (!hasPatch) {
     return current ? jsonResult(current) : textResult('(no brief)');
   }
   const brief = buildBrief(root, args, current);
   validateBriefChecks(brief.checks, config, brief.profile);
-  return jsonResult(writeBrief(root, brief));
+  return jsonResult(writeBrief(root, brief, session));
 }
 
 function toolEnhancePlan(args = {}) {
-  const { root } = contextFor(args);
-  if (!Array.isArray(args.tasks)) return jsonResult(readPlan(root));
-  const plan = writePlan(root, args.tasks, { replace: Boolean(args.replace) });
+  const { root, session } = contextFor(args);
+  if (!Array.isArray(args.tasks)) return jsonResult(readPlan(root, session));
+  const plan = writePlan(root, args.tasks, { replace: Boolean(args.replace) }, session);
   return jsonResult(plan);
 }
 
 function toolEnhanceDecide(args = {}) {
-  const { root } = contextFor(args);
-  const entry = appendDecision(root, args.decision, args.rationale);
+  const { root, session } = contextFor(args, { tolerateAmbiguity: true });
+  // Decisions stay project-level; the entry carries the session when known.
+  const entry = appendDecision(root, args.decision, args.rationale, session);
   return entry ? jsonResult(entry) : textResult('decision is required', true);
 }
 
@@ -346,38 +378,38 @@ function jobSummary(job) {
 }
 
 function toolEnhanceJob(args = {}) {
-  const { root } = contextFor(args);
+  const { root, session } = contextFor(args);
   const action = String(args.action || 'list');
-  const jobs = readJobs(root).jobs || [];
+  const jobs = readJobs(root, session).jobs || [];
   if (action === 'list') return jsonResult(jobs.slice(-30).map(jobSummary));
   const job = jobs.find((item) => item.id === args.job_id || item.agent_id === args.job_id);
   if (!job) return textResult(`job not found: ${args.job_id || '(missing)'}`, true);
   if (action === 'get') return jsonResult(jobSummary(job));
   if (action === 'cancel') {
-    const next = upsertJob(root, job.id, { status: 'cancelled', note: args.note || '' });
+    const next = upsertJob(root, job.id, { status: 'cancelled', note: args.note || '' }, session);
     return jsonResult(jobSummary(next));
   }
   if (action === 'update') {
     const next = upsertJob(root, job.id, {
       status: args.status || job.status,
       note: args.note || job.note || '',
-    });
+    }, session);
     return jsonResult(jobSummary(next));
   }
   return textResult(`unsupported action: ${action}`, true);
 }
 
 function toolEnhanceCheck(args = {}) {
-  const { root, config } = contextFor(args);
-  const brief = readBrief(root);
+  const { root, config, session } = contextFor(args);
+  const brief = readBrief(root, session);
   if (!brief) return textResult('no brief: call enhance_brief before enhance_check', true);
   const checkers = Array.isArray(args.checkers) && args.checkers.length ? args.checkers : null;
   const taskIds = Array.isArray(args.task_ids) ? args.task_ids.map(String) : [];
-  const registry = readWorktrees(root).worktrees || {};
+  const registry = readWorktrees(root, session).worktrees || {};
   const code = String(brief.profile || '') === 'code';
   let worktree = '';
   if (args.worktree) {
-    const located = validateWorktree(root, String(args.worktree));
+    const located = validateWorktree(root, String(args.worktree), session);
     if (!located.ok) {
       return jsonResult({ ok: false, blocker: located.blocker || 'invalid worktree path' }, true);
     }
@@ -412,10 +444,10 @@ function toolEnhanceCheck(args = {}) {
       }, true);
     }
   }
-  const result = runBriefChecks(root, brief, config, checkers, { worktree });
+  const result = runBriefChecks(root, brief, config, checkers, { worktree, session });
   result.task_ids = taskIds;
   result.worktree = worktree;
-  const planIds = new Set((readPlan(root).tasks || []).map((task) => String(task.id)));
+  const planIds = new Set((readPlan(root, session).tasks || []).map((task) => String(task.id)));
   const unknownIds = taskIds.filter((id) => !planIds.has(id));
   if (unknownIds.length > 0) {
     result.findings = [
@@ -444,7 +476,7 @@ function toolEnhanceCheck(args = {}) {
       || taskIds.some((id) => registry[id]?.path && String(registry[id]?.status || 'active') !== 'landed')
     )
   );
-  const saved = writeLastCheck(root, result);
+  const saved = writeLastCheck(root, result, session);
   const completed = [];
   const pendingLand = [];
   const blockedByLand = [];
@@ -452,19 +484,19 @@ function toolEnhanceCheck(args = {}) {
     for (const id of taskIds) {
       if (saved.land_required) {
         if (id === ownerId) {
-          if (updatePlanTask(root, id, { status: 'in_progress' })) pendingLand.push(id);
+          if (updatePlanTask(root, id, { status: 'in_progress' }, session)) pendingLand.push(id);
         } else {
           // A dependent/verification task cannot complete before the worktree
           // owner lands; that would make the plan claim verification happened
           // before the implementation was delivered.
           blockedByLand.push(id);
         }
-      } else if (updatePlanTask(root, id, { status: 'completed' })) {
+      } else if (updatePlanTask(root, id, { status: 'completed' }, session)) {
         completed.push(id);
       }
     }
     if (saved.land_required && ownerId && !taskIds.includes(ownerId)) {
-      if (updatePlanTask(root, ownerId, { status: 'in_progress' })) pendingLand.push(ownerId);
+      if (updatePlanTask(root, ownerId, { status: 'in_progress' }, session)) pendingLand.push(ownerId);
     }
   }
   return jsonResult({
@@ -476,33 +508,34 @@ function toolEnhanceCheck(args = {}) {
 }
 
 function toolEnhanceWorktree(args = {}) {
-  const { root } = contextFor(args);
+  const { root, session } = contextFor(args);
   const action = String(args.action || '');
   const taskId = String(args.task_id || '').trim();
-  if (action === 'list') return jsonResult(listWorktrees(root));
+  if (action === 'list') return jsonResult(listWorktrees(root, { session }));
   if (action !== 'create' && action !== 'diff' && action !== 'land' && action !== 'remove') {
     return textResult(`unsupported action: ${action || '(missing)'}; use create, list, diff, land, or remove`, true);
   }
   if (!taskId) return textResult(`task_id is required for action: ${action}`, true);
   if (action === 'create') {
-    const gate = checkTaskDependencies(root, taskId);
+    const gate = checkTaskDependencies(root, taskId, session);
     if (!gate.ok) return jsonResult(gate, true);
-    const created = createWorktree(root, taskId);
+    const created = createWorktree(root, taskId, { session });
     return jsonResult(created, !created.ok);
   }
-  if (action === 'diff') return jsonResult(diffWorktree(root, taskId));
+  if (action === 'diff') return jsonResult(diffWorktree(root, taskId, { session }));
   if (action === 'land') {
     const landed = landWorktree(root, taskId, {
       runChecks: args.run_checks !== false,
       commit: Boolean(args.commit),
+      session,
     });
     return jsonResult(landed, !landed.ok);
   }
-  return jsonResult(removeWorktree(root, taskId, { discard: Boolean(args.discard) }));
+  return jsonResult(removeWorktree(root, taskId, { discard: Boolean(args.discard), session }));
 }
 
 function toolEnhanceRecall(args = {}) {
-  const { root, config } = contextFor(args);
+  const { root, config } = contextFor(args, { tolerateAmbiguity: true });
   if (args.handle) {
     if (!isHandle(args.handle)) return textResult(`invalid artifact handle: ${args.handle}`, true);
     const maxChars = Math.max(200, Math.min(8000, Number(args.max_tokens || config.context.maxRecallTokens) * 4));
@@ -517,7 +550,7 @@ function toolEnhanceRecall(args = {}) {
 }
 
 function toolEnhanceArtifact(args = {}) {
-  const { root, config } = contextFor(args);
+  const { root, config } = contextFor(args, { tolerateAmbiguity: true });
   const handle = String(args.handle || '');
   if (!isHandle(handle)) return textResult(`invalid artifact handle: ${handle}`, true);
   const limit = Math.max(200, Math.min(12000, Number(args.limit || config.context.maxArtifactChars)));
@@ -528,7 +561,7 @@ function toolEnhanceArtifact(args = {}) {
 }
 
 function toolEnhanceCapabilities(args = {}) {
-  const { config } = contextFor(args);
+  const { config } = contextFor(args, { tolerateAmbiguity: true });
   return jsonResult({
     ...(config.capabilities || {}),
     server: {
@@ -542,7 +575,7 @@ function toolEnhanceCapabilities(args = {}) {
 }
 
 function toolEnhanceWorkerContract(args = {}) {
-  contextFor(args);
+  contextFor(args, { tolerateAmbiguity: true });
   const contract = workerContract(String(args.agent_type || 'worker'), {
     role: String(args.role || ''),
     jobId: String(args.job_id || ''),

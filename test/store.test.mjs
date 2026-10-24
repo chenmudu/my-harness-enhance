@@ -34,6 +34,10 @@ const STORE = path.resolve(HERE, '..', 'src', 'core', 'store.mjs');
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-store-home-'),
 );
+// Keep the suite hermetic when an ambient hook/MCP parent leaks these vars.
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-store-project-'));
@@ -162,13 +166,17 @@ test('concurrent upserts from separate processes do not lose jobs', async () => 
     '});',
   ].join('\n');
   const count = 6;
+  const childEnv = { ...process.env };
+  delete childEnv.MY_HARNESS_ENHANCE_PROJECT;
+  delete childEnv.MY_HARNESS_ENHANCE_SESSION;
+  delete childEnv.MY_HARNESS_ENHANCE_GLOBAL;
   await Promise.all(Array.from({ length: count }, (_, index) => execFileAsync(
     process.execPath,
     ['--input-type=module', '-e', script],
     {
       cwd: path.resolve(HERE, '..'),
       env: {
-        ...process.env,
+        ...childEnv,
         MHE_TEST_ROOT: root,
         MHE_TEST_JOB: `agent_${index}`,
       },

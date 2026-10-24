@@ -11,6 +11,10 @@ import { appendMetric, initStore } from '../src/core/store.mjs';
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-report-home-'),
 );
+// Keep the suite hermetic when an ambient hook/MCP parent leaks these vars.
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(HERE, '..', 'bin', 'mhe.mjs');
@@ -91,8 +95,12 @@ test('mhe report prints the summary and the unmeasured list', () => {
     result_tokens: 120,
   });
 
+  const cliEnv = { ...process.env };
+  delete cliEnv.MY_HARNESS_ENHANCE_PROJECT;
+  delete cliEnv.MY_HARNESS_ENHANCE_SESSION;
+  delete cliEnv.MY_HARNESS_ENHANCE_GLOBAL;
   const result = spawnSync(process.execPath, [CLI, 'report', '--root', root], {
-    env: { ...process.env },
+    env: cliEnv,
     encoding: 'utf8',
   });
   assert.equal(result.status, 0, result.stderr);
@@ -102,7 +110,7 @@ test('mhe report prints the summary and the unmeasured list', () => {
   assert.match(result.stdout, /not measured by hooks: M_T, b, B, C/);
 
   const json = spawnSync(process.execPath, [CLI, 'report', '--root', root, '--json'], {
-    env: { ...process.env },
+    env: cliEnv,
     encoding: 'utf8',
   });
   const parsed = JSON.parse(json.stdout);

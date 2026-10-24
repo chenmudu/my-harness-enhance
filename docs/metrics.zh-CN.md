@@ -52,7 +52,7 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 
 | 事件 | 记录字段 |
 |---|---|
-| `session_start` | model、source、session id、capsule 字符/tokens |
+| `session_start` | model、source、session id、`session`、capsule 字符/tokens |
 | `prompt_submitted` | prompt 字符数、goal 字符数、capsule tokens |
 | `dispatch` / `tool_denied` | tool、allow、gate |
 | `job_start` / `job_stop` | agent 类型、job id、status、valid、retryable、结果 tokens |
@@ -63,6 +63,10 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 `mhe report` 汇总 job 数、非法率、envelope 大小、capsule tokens、拒绝数、
 捕获字节数以及按 agent 的统计；
 它也会打印**未**测量的项。
+
+`mhe report --session <id>` 过滤到单个会话分片并打印解析出的会话；
+每个 hook 事件都带 `session`。不带该参数时报告聚合全部条目，
+并列出按会话的计数。
 
 ### 已采集与未采集
 

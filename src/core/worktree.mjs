@@ -14,6 +14,7 @@ import {
   readPlan,
   readWorktrees,
   removeWorktreeEntry,
+  sessionKey,
   updatePlanTask,
   upsertWorktree,
   writeLastCheck,
@@ -23,9 +24,11 @@ import {
  * Isolated git worktrees per code task. Worktrees live outside the target
  * repository, under the user-level state home:
  *
- *   ~/.my-harness-enhance/worktrees/<projectKey>/<task_id>
+ *   ~/.my-harness-enhance/worktrees/<projectKey>/<sessionKey>/<task_id>
  *
- * Git metadata for the linked worktree still lives in the repo's
+ * The pre-sharding path `worktrees/<projectKey>/<task_id>` stays readable for
+ * existing worktrees (list/remove); new worktrees always use the session
+ * directory. Git metadata for the linked worktree still lives in the repo's
  * .git/worktrees directory; that is git's own bookkeeping and no source
  * files are written into the target working tree.
  */
@@ -66,12 +69,27 @@ export function worktreesRoot() {
   return path.join(enhanceHome(), 'worktrees');
 }
 
-export function projectWorktreesDir(root) {
-  return path.join(worktreesRoot(), projectKey(root));
+export function projectWorktreesDir(root, session = '') {
+  const base = path.join(worktreesRoot(), projectKey(root));
+  return String(session || '').trim() ? path.join(base, sessionKey(session)) : base;
 }
 
-export function worktreePathFor(root, taskId) {
-  return path.join(projectWorktreesDir(root), String(taskId || ''));
+export function worktreePathFor(root, taskId, session = '') {
+  return path.join(projectWorktreesDir(root, session), String(taskId || ''));
+}
+
+function managedWorktreeDirs(root, session = '') {
+  const legacy = canonicalPath(projectWorktreesDir(root));
+  if (!String(session || '').trim()) return [legacy];
+  return [...new Set([canonicalPath(projectWorktreesDir(root, session)), legacy])];
+}
+
+function managedTaskId(root, candidate, session = '') {
+  const target = canonicalPath(candidate);
+  for (const dir of managedWorktreeDirs(root, session)) {
+    if (path.dirname(target) === dir) return path.basename(target);
+  }
+  return '';
 }
 
 function commonDir(target) {
@@ -114,10 +132,10 @@ function assertCleanRepo(root, context = 'before creating a worktree') {
  * Code-level enforcement of plan ordering for worktree creation: the task
  * must exist in the plan and every depends_on task must be completed.
  */
-export function checkTaskDependencies(root, taskId) {
+export function checkTaskDependencies(root, taskId, session = '') {
   const id = String(taskId || '').trim();
   if (!id) return blocker('task_id is required', { rule: 'worktree.task_id' });
-  const tasks = readPlan(root).tasks || [];
+  const tasks = readPlan(root, session).tasks || [];
   const byId = new Map(tasks.map((task) => [String(task.id), task]));
   const task = byId.get(id);
   if (!task) {
@@ -143,7 +161,7 @@ export function checkTaskDependencies(root, taskId) {
   return { ok: true, task };
 }
 
-export function createWorktree(root, taskId) {
+export function createWorktree(root, taskId, { session = '' } = {}) {
   const id = String(taskId || '').trim();
   if (!isValidTaskId(id)) {
     return blocker(
@@ -151,7 +169,7 @@ export function createWorktree(root, taskId) {
       { rule: 'worktree.task_id' },
     );
   }
-  const plan = readPlan(root);
+  const plan = readPlan(root, session);
   const task = (plan.tasks || []).find((item) => item.id === id);
   if (task && String(task.status || '') === 'completed') {
     return blocker(`task ${id} is already completed; create a new task for follow-up work`, { rule: 'worktree.task_completed' });
@@ -159,8 +177,8 @@ export function createWorktree(root, taskId) {
   const clean = assertCleanRepo(root);
   if (!clean.ok) return clean;
 
-  const managed = canonicalPath(projectWorktreesDir(root));
-  const target = canonicalPath(worktreePathFor(root, id));
+  const managed = canonicalPath(projectWorktreesDir(root, session));
+  const target = canonicalPath(worktreePathFor(root, id, session));
   const repoRoot = canonicalPath(root);
   // The worktree must sit inside its managed directory and outside the
   // repository working tree, in both containment directions.
@@ -198,8 +216,8 @@ export function createWorktree(root, taskId) {
     created_at: new Date().toISOString(),
     status: 'active',
   };
-  upsertWorktree(root, id, entry);
-  const planTask = updatePlanTask(root, id, { status: 'in_progress' });
+  upsertWorktree(root, id, entry, session);
+  const planTask = updatePlanTask(root, id, { status: 'in_progress' }, session);
   return {
     ok: true,
     ...entry,
@@ -208,13 +226,12 @@ export function createWorktree(root, taskId) {
   };
 }
 
-export function listWorktrees(root, { limit = 50 } = {}) {
+export function listWorktrees(root, { limit = 50, session = '' } = {}) {
   const result = git(root, ['worktree', 'list', '--porcelain']);
   if (!gitOk(result)) {
     return blocker(`cannot list worktrees: ${gitError(result)}`, { rule: 'worktree.list_failed', worktrees: [] });
   }
-  const managed = canonicalPath(projectWorktreesDir(root));
-  const registry = readWorktrees(root).worktrees || {};
+  const registry = readWorktrees(root, session).worktrees || {};
   const entries = [];
   let current = null;
   for (const line of String(result.stdout || '').split('\n')) {
@@ -232,10 +249,7 @@ export function listWorktrees(root, { limit = 50 } = {}) {
     }
   }
   const mapped = entries.map((entry) => {
-    const canonical = canonicalPath(entry.path);
-    const managedTask = isWithin(managed, canonical) || canonical === managed
-      ? path.basename(entry.path)
-      : '';
+    const managedTask = managedTaskId(root, entry.path, session);
     const record = managedTask && registry[managedTask] ? registry[managedTask] : null;
     return {
       path: entry.path,
@@ -251,16 +265,15 @@ export function listWorktrees(root, { limit = 50 } = {}) {
   return { ok: true, worktrees: bounded, truncated: mapped.length > bounded.length };
 }
 
-function resolveWorktree(root, taskId) {
+function resolveWorktree(root, taskId, session = '') {
   const id = String(taskId || '').trim();
   if (!isValidTaskId(id)) {
     return blocker(`invalid task_id: ${id || '(empty)'}`, { rule: 'worktree.task_id' });
   }
-  const registry = readWorktrees(root).worktrees || {};
+  const registry = readWorktrees(root, session).worktrees || {};
   const entry = registry[id] || null;
-  const target = canonicalPath(entry?.path || worktreePathFor(root, id));
-  const managed = canonicalPath(projectWorktreesDir(root));
-  if (!isWithin(managed, target)) {
+  const target = canonicalPath(entry?.path || worktreePathFor(root, id, session));
+  if (!managedTaskId(root, target, session)) {
     return blocker(
       `registered worktree is outside the managed directory: ${target}`,
       { rule: 'worktree.path' },
@@ -272,9 +285,9 @@ function resolveWorktree(root, taskId) {
 export function diffWorktree(
   root,
   taskId,
-  { maxPatchChars = 40000, maxFiles = 200, includePatch = true } = {},
+  { maxPatchChars = 40000, maxFiles = 200, includePatch = true, session = '' } = {},
 ) {
-  const located = resolveWorktree(root, taskId);
+  const located = resolveWorktree(root, taskId, session);
   if (!located.ok) return located;
   if (!fs.existsSync(located.path)) {
     return blocker(`worktree does not exist on disk: ${located.path}`, { rule: 'worktree.missing' });
@@ -381,9 +394,9 @@ function briefFindingSummary(item) {
 export function landWorktree(
   root,
   taskId,
-  { maxPatchChars = 40000, maxFiles = 200, runChecks = true, commit = false } = {},
+  { maxPatchChars = 40000, maxFiles = 200, runChecks = true, commit = false, session = '' } = {},
 ) {
-  const located = resolveWorktree(root, taskId);
+  const located = resolveWorktree(root, taskId, session);
   if (!located.ok) return located;
   if (!fs.existsSync(located.path)) {
     return blocker(`worktree does not exist on disk: ${located.path}`, { rule: 'worktree.missing' });
@@ -399,7 +412,7 @@ export function landWorktree(
   let brief = null;
   let config = null;
   if (runChecks) {
-    brief = readBrief(base);
+    brief = readBrief(base, session);
     if (brief) ({ config } = loadConfig(base));
   }
   const effectiveChecks = brief
@@ -409,7 +422,7 @@ export function landWorktree(
     : [];
   let inputsPreflight = 'skipped';
   if (brief && effectiveChecks.includes('inputs')) {
-    const preflight = runBriefChecks(base, brief, config, ['inputs'], {});
+    const preflight = runBriefChecks(base, brief, config, ['inputs'], { session });
     if (!preflight.ok) {
       inputsPreflight = 'failed';
       return {
@@ -514,7 +527,7 @@ export function landWorktree(
         };
         warnings.push('inputs ran as a pre-apply preflight; no post-apply checks remain');
       } else {
-        const result = runBriefChecks(base, brief, config, postIds, {});
+        const result = runBriefChecks(base, brief, config, postIds, { session });
         postResult = result;
         const findings = (result.findings || []).slice(0, 20);
         checks = {
@@ -538,7 +551,7 @@ export function landWorktree(
             land_required: true,
             landed: false,
             inputs_preflight: inputsPreflight,
-          });
+          }, session);
           revertBase(base);
           const blockers = checks.findings
             .filter((item) => item.level === 'blocker')
@@ -622,17 +635,17 @@ export function landWorktree(
       status: 'landed',
       landed_at: new Date().toISOString(),
       landed_files: appliedFiles,
-    });
+    }, session);
   } else {
     upsertWorktree(root, located.taskId, {
       status: 'landed',
       landed_at: new Date().toISOString(),
       landed_files: appliedFiles,
       cleanup_error: gitError(cleanup),
-    });
+    }, session);
     warnings.push(`worktree could not be reset after landing: ${gitError(cleanup)}; remove may require discard=true`);
   }
-  const planTask = updatePlanTask(root, located.taskId, { status: 'completed' });
+  const planTask = updatePlanTask(root, located.taskId, { status: 'completed' }, session);
 
   // The landed patch is the authoritative last-check for a code task:
   // record it so the capsule, the verification gate, and the dispatch gate
@@ -646,7 +659,7 @@ export function landWorktree(
       land_required: false,
       landed: true,
       inputs_preflight: inputsPreflight,
-    });
+    }, session);
   }
 
   const patchCap = Math.max(0, Number(maxPatchChars) || 0);
@@ -674,13 +687,13 @@ export function landWorktree(
   };
 }
 
-export function removeWorktree(root, taskId, { discard = false } = {}) {
-  const located = resolveWorktree(root, taskId);
+export function removeWorktree(root, taskId, { discard = false, session = '' } = {}) {
+  const located = resolveWorktree(root, taskId, session);
   if (!located.ok) return located;
   if (!fs.existsSync(located.path)) {
     // Directory is gone (deleted outside git): prune metadata and registry.
     git(root, ['worktree', 'prune']);
-    removeWorktreeEntry(root, located.taskId);
+    removeWorktreeEntry(root, located.taskId, session);
     return {
       ok: true,
       task_id: located.taskId,
@@ -712,7 +725,7 @@ export function removeWorktree(root, taskId, { discard = false } = {}) {
   if (!gitOk(remove)) {
     return blocker(`git worktree remove failed: ${gitError(remove)}`, { rule: 'worktree.remove_failed' });
   }
-  removeWorktreeEntry(root, located.taskId);
+  removeWorktreeEntry(root, located.taskId, session);
   return { ok: true, task_id: located.taskId, path: located.path, removed: true };
 }
 
@@ -722,15 +735,15 @@ export function removeWorktree(root, taskId, { discard = false } = {}) {
  * worktree registry) and must belong to the same git repository. This is the
  * single choke point against path traversal via worktree arguments.
  */
-export function validateWorktree(root, candidate) {
+export function validateWorktree(root, candidate, session = '') {
   const raw = String(candidate || '').trim();
   if (!raw) return blocker('worktree path is empty', { rule: 'worktree.path' });
   const target = canonicalPath(raw);
   if (!fs.existsSync(target)) {
     return blocker(`worktree path does not exist: ${target}`, { rule: 'worktree.missing' });
   }
-  const managed = isWithin(canonicalPath(projectWorktreesDir(root)), target);
-  const registry = readWorktrees(root).worktrees || {};
+  const managed = Boolean(managedTaskId(root, target, session));
+  const registry = readWorktrees(root, session).worktrees || {};
   const known = Object.values(registry).some(
     (entry) => entry?.path && canonicalPath(entry.path) === target,
   );

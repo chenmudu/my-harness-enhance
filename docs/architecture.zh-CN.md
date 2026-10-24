@@ -198,19 +198,32 @@ goal/plan 原语、会话存储。它们只是*如何实现*某条不变量而�
   projects/<hash>/
     config.json                    conductor mode, capabilities, logging
     capabilities.json              resolved role -> native agent mapping
-    goal.json                      canonical goal, acceptance, constraints
-    plan.json                      task graph
-    decisions.jsonl                append-only decisions
-    jobs.json                      job status, agent id/type/role, envelope summary
-    session.json                   current session role/model/source
-    capsule.md                     compact state injected into the conductor
+    decisions.jsonl                append-only decisions (optional session)
+    sessions.json                  host session -> id, host_pid, cwd, last_seen
     artifacts/                     content-addressed raw evidence
-    metrics.jsonl                  hook/routing metrics
+    metrics.jsonl                  hook/routing metrics (each event has session)
     logs/                          errors-only by default
+    .lock                          project-level write lock
+    sessions/<sid>/
+      goal.json                    canonical goal, acceptance, constraints
+      brief.json                   shared brief for this session
+      plan.json                    task graph
+      jobs.json                    job status, agent id/type/role, envelope summary
+      session.json                 current session role/model/source
+      last-check.json              durable deterministic check result
+      capsule.md                   compact state injected into the conductor
+      journal.md                   follow-up prompts
+      worktrees.json               task id -> path, head, status
+  worktrees/<projectKey>/<sessionKey>/<task_id>
   legacy/                          migrated old .router dirs
 ```
 
 状态存储才是唯一事实源（source of truth）。逐字记录不是。
+
+工作状态按会话放在 `sessions/<sid>/` 下；config、capabilities、
+decisions、artifacts、metrics、`sessions.json`、logs 和锁是共享的。
+两个会话可以并发运行：它们只在共享的追加/写入路径上竞争，
+goal、plan、jobs、capsule 和 worktrees 相互隔离。
 
 `capsule.md` 是注入给 conductor 的紧凑状态；`jobs.json` 是路由表；
 `logs/hooks.jsonl` 是可选项（默认只记错误），不含 prompt 和原始输出；
@@ -218,12 +231,17 @@ goal/plan 原语、会话存储。它们只是*如何实现*某条不变量而�
 conductor 会话和被映射的原生 worker 创建，
 不会为无关会话创建。
 
+分片前的项目级工作文件保持可读；会话第一次写入时会把它们复制到
+该会话目录，从不删除。Git worktree 位于
+`worktrees/<projectKey>/<sessionKey>/<task_id>`。
+
 ### 3.1 capsule 投影
 
 `capsule.md` 从 state 重建，从不摘录 transcript。预算来自
 `config.context.maxCapsuleTokens`（默认 1800 tokens）。
 
 - **固定段（pinned）：** PROJECT（每次 `enhance_*` 调用传入的精确路径）、
+  SESSION（分片 id；接受 `session` 的工具必须收到它）、
   NEXT（第一个 in-progress 任务，否则第一个 pending，否则最早的活动 job）、
   LAST CHECK。
 - **按优先级追加：** GOAL、ACCEPTANCE、CONSTRAINTS、WORKERS、BRIEF、PLAN、

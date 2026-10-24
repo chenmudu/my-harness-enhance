@@ -18,6 +18,7 @@ import {
   unregisterProject,
 } from '../../core/state-root.mjs';
 import { globalConfigPath, readGlobalConfig, writeGlobalConfig } from '../../core/global.mjs';
+import { legacyStateFiles } from '../../core/store.mjs';
 import {
   detectAvailableAgents,
   resolveCapabilities,
@@ -561,6 +562,16 @@ export function doctorQoder({ root = process.cwd(), configDir = null, platform =
     name: 'legacy .router',
     ok: !fs.existsSync(legacyRouter),
     detail: fs.existsSync(legacyRouter) ? legacyRouter : '(none)',
+  });
+  // Informational: pre-sharding working state stays readable and is copied
+  // into a session shard on the next start. It is never deleted automatically.
+  const unsharded = legacyStateFiles(projectRoot);
+  checks.push({
+    name: 'legacy unsharded state',
+    ok: true,
+    detail: unsharded.length
+      ? `${unsharded.join(', ')} (kept; copied into sessions/<sid>/ on start)`
+      : '(none)',
   });
   const legacyAgents = fs.existsSync(path.join(targetDir, 'agents'))
     ? fs.readdirSync(path.join(targetDir, 'agents')).filter((file) => file.startsWith('hr-'))

@@ -52,7 +52,7 @@ raw summary):
 
 | Event | Recorded fields |
 |---|---|
-| `session_start` | model, source, session id, capsule chars/tokens |
+| `session_start` | model, source, session id, `session`, capsule chars/tokens |
 | `prompt_submitted` | prompt chars, goal chars, capsule tokens |
 | `dispatch` / `tool_denied` | tool, allow, gate |
 | `job_start` / `job_stop` | agent type, job id, status, valid, retryable, result tokens |
@@ -63,6 +63,10 @@ raw summary):
 `mhe report` summarizes job counts, invalid rate, envelope sizes, capsule
 tokens, denials, captured bytes, and per-agent counts. It also prints what is
 **not** measured.
+
+`mhe report --session <id>` filters to one session shard and prints the
+resolved session; every hook event carries `session`. Without the flag the
+report aggregates all entries and lists per-session counts.
 
 ### Collected vs not collected
 

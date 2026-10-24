@@ -20,6 +20,7 @@ import {
   appendDecision,
   appendJournal,
   appendMetric,
+  ensureSession,
   findJobByAgent,
   markSession,
   newJobId,
@@ -29,6 +30,7 @@ import {
   readLastCheck,
   readSession,
   readWorktrees,
+  sessionKey,
   updatePlanTask,
   upsertJob,
   writeGoal,
@@ -59,9 +61,18 @@ import {
 
 const EVENT = process.argv[2] || 'Unknown';
 
-function recordMetric(root, event) {
+function sessionIdOf(payload = {}) {
+  return String(payload.session_id || payload.sessionId || '').trim();
+}
+
+function sessionOf(payload = {}) {
+  const id = sessionIdOf(payload);
+  return id ? sessionKey(id) : '';
+}
+
+function recordMetric(root, event, session = '') {
   try {
-    appendMetric(root, event);
+    appendMetric(root, event, session);
   } catch {
     // Metrics must never break a hook.
   }
@@ -118,13 +129,13 @@ function normalizeWorktreeRef(value) {
  * A stale/wrong hash is a hard denial, not a worker editing a nonexistent
  * directory.
  */
-function dispatchWorktreeReason(root, taskId, text) {
+function dispatchWorktreeReason(root, taskId, text, session = '') {
   const matched = text.match(DISPATCH_WORKTREE_RE);
   if (!matched) {
     return `code tasks must include worktree: <path> in the dispatch prompt (the exact path returned by enhance_worktree create for ${taskId}). Add the line and retry.`;
   }
   const ref = normalizeWorktreeRef(matched[1]);
-  const entry = readWorktrees(root).worktrees?.[taskId];
+  const entry = readWorktrees(root, session).worktrees?.[taskId];
   if (!entry?.path) {
     return `no worktree is registered for task ${taskId}; call enhance_worktree create task_id=${taskId} and copy its exact path.`;
   }
@@ -139,15 +150,15 @@ function dispatchWorktreeReason(root, taskId, text) {
  * reason, or '' when the dispatch may proceed (including non-code briefs and
  * dispatches that carry no plan task, which are left to the base policy).
  */
-function dispatchGateReason(root, toolInput) {
-  const brief = readBrief(root);
+function dispatchGateReason(root, toolInput, session = '') {
+  const brief = readBrief(root, session);
   if (!brief || String(brief.profile || '') !== 'code') return '';
   const text = [toolInput?.prompt, toolInput?.description]
     .map((value) => (typeof value === 'string' ? value : ''))
     .join('\n');
   const matched = text.match(DISPATCH_TASK_ID_RE);
   if (!matched) {
-    const hints = Object.entries(readWorktrees(root).worktrees || {})
+    const hints = Object.entries(readWorktrees(root, session).worktrees || {})
       .filter(([, entry]) => entry?.path && String(entry.status || 'active') !== 'landed')
       .slice(0, 3)
       .map(([id, entry]) => `task_id: ${id}\nworktree: ${entry.path}`)
@@ -157,15 +168,15 @@ function dispatchGateReason(root, toolInput) {
         ? `Use one of these exact prefixes:\n${hints}`
         : 'Call enhance_worktree create first; it returns the exact prompt_prefix to copy.');
   }
-  const gate = checkTaskDependencies(root, matched[1]);
+  const gate = checkTaskDependencies(root, matched[1], session);
   if (!gate.ok) return `dispatch blocked for task ${matched[1]}: ${gate.blocker}`;
-  const worktreeReason = dispatchWorktreeReason(root, matched[1], text);
+  const worktreeReason = dispatchWorktreeReason(root, matched[1], text, session);
   if (worktreeReason) return worktreeReason;
-  const landedEntry = readWorktrees(root).worktrees?.[matched[1]];
+  const landedEntry = readWorktrees(root, session).worktrees?.[matched[1]];
   if (String(landedEntry?.status || '') === 'landed') {
     return `task ${matched[1]} is already landed; do not dispatch another worker. Remove the worktree with enhance_worktree remove and report the result.`;
   }
-  const lastCheck = readLastCheck(root);
+  const lastCheck = readLastCheck(root, session);
   const checkedIds = Array.isArray(lastCheck?.task_ids) ? lastCheck.task_ids.map(String) : [];
   const verified = Boolean(
     lastCheck?.ok
@@ -181,17 +192,17 @@ function dispatchGateReason(root, toolInput) {
   return '';
 }
 
-function landReminder(root, envelope, agentType = '') {
+function landReminder(root, envelope, agentType = '', session = '') {
   if (agentType === 'Explore') return '';
-  const brief = readBrief(root);
+  const brief = readBrief(root, session);
   if (!brief || String(brief.profile || '') !== 'code') return '';
   const taskId = String(envelope?.task_id || '').trim();
-  const worktrees = readWorktrees(root).worktrees || {};
+  const worktrees = readWorktrees(root, session).worktrees || {};
   const ids = taskId && worktrees[taskId] ? [taskId] : Object.keys(worktrees);
   for (const id of ids) {
     const entry = worktrees[id];
     if (!entry?.path || String(entry.status || 'active') === 'landed') continue;
-    const diff = diffWorktree(root, id, { includePatch: false });
+    const diff = diffWorktree(root, id, { includePatch: false, session });
     if (!diff.ok || diff.changed_count <= 0) continue;
     return `task ${id}: worktree ${entry.path} has ${diff.changed_count} changed file(s) that are not landed. `
       + `Call enhance_worktree land task_id=${id} directly (it runs the brief checks, marks the task completed, and resets the worktree); do not dispatch a verification worker.`;
@@ -199,19 +210,19 @@ function landReminder(root, envelope, agentType = '') {
   return '';
 }
 
-function verificationGateReason(root, toolInput) {
+function verificationGateReason(root, toolInput, session = '') {
   const text = [toolInput?.prompt, toolInput?.description]
     .map((value) => (typeof value === 'string' ? value : ''))
     .join('\n');
   if (!/(verify|verification|parity|recheck|复核|校对|验收)/i.test(text)) return '';
-  const completed = (readJobs(root).jobs || []).filter((job) => job.status === 'ok');
+  const completed = (readJobs(root, session).jobs || []).filter((job) => job.status === 'ok');
   if (completed.length === 0) return '';
   const latest = completed.reduce((a, b) => {
     const at = (job) => Date.parse(job.updated_at || job.finished_at || job.created_at || 0) || 0;
     return at(b) > at(a) ? b : a;
   });
   const jobAt = Date.parse(latest.updated_at || latest.finished_at || latest.created_at || 0) || 0;
-  const last = readLastCheck(root);
+  const last = readLastCheck(root, session);
   const checkAt = Date.parse(last?.at || 0) || 0;
   if (!last || checkAt < jobAt) {
     return `worker ${latest.id} completed task ${latest.task_id || '(unassigned)'} but no deterministic check ran after it. Run enhance_check now; do not dispatch a verification worker.`;
@@ -233,7 +244,7 @@ function artifactSummary(text, fallback = '') {
   return `${(lastSpace > 160 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
-function syncPlanFromEnvelope(root, envelope) {
+function syncPlanFromEnvelope(root, envelope, session = '') {
   const taskId = String(envelope?.task_id || '').trim();
   if (!taskId) return null;
   const check = envelope.check_result;
@@ -250,7 +261,7 @@ function syncPlanFromEnvelope(root, envelope) {
     status = 'in_progress';
   }
   if (!status) return null;
-  return updatePlanTask(root, taskId, { status });
+  return updatePlanTask(root, taskId, { status }, session);
 }
 
 async function onSessionStart(payload, root, config) {
@@ -260,22 +271,26 @@ async function onSessionStart(payload, root, config) {
   if (!config.enabled || !config.conductor?.auto) return;
 
   const source = String(payload.source || '');
+  const sessionId = sessionIdOf(payload);
+  const session = sessionOf(payload);
+  if (session) ensureSession(root, session);
   writeSession(root, {
     role: 'conductor',
     model: modelOf(payload),
     source,
     fresh: ['startup', 'new', 'clear'].includes(source),
-  });
-  const sessionId = String(payload.session_id || payload.sessionId || '').trim();
-  if (sessionId && ['startup', 'new', 'clear'].includes(source)) {
+  }, session);
+  if (sessionId) {
     markSession(root, sessionId, {
       role: 'conductor',
       model: modelOf(payload),
       source,
+      host_pid: process.ppid,
+      cwd: String(payload.cwd || process.cwd()),
     });
   }
   log(root, { event: EVENT, role: 'conductor', model: modelOf(payload) }, config);
-  const capsule = writeCapsule(root);
+  const capsule = writeCapsule(root, { session });
   recordMetric(root, {
     event: 'session_start',
     role: 'conductor',
@@ -284,8 +299,8 @@ async function onSessionStart(payload, root, config) {
     session_id: sessionId || undefined,
     capsule_chars: capsule.length,
     capsule_tokens: estimateTokens(capsule),
-  });
-  writeText(conductorInjection(root, { contractMode: 'injected' }));
+  }, session);
+  writeText(conductorInjection(root, { contractMode: 'injected', session }));
 }
 
 async function onUserPromptSubmit(payload, root, config) {
@@ -294,33 +309,34 @@ async function onUserPromptSubmit(payload, root, config) {
   if (!isConductorSession(root, config, payload)) return;
 
   const prompt = String(payload.prompt || '').trim();
+  const session = sessionOf(payload);
   if (prompt) {
-    const goal = readGoal(root);
-    const session = readSession(root);
+    const goal = readGoal(root, session);
+    const state = readSession(root, session);
     const continuation = /^(继续|接着|continue|go on|retry|再试|继续吧)/i.test(prompt)
       && prompt.length < 60;
     if (!goal.text) {
-      writeGoal(root, { text: prompt });
-      appendDecision(root, 'goal set from first user prompt');
-    } else if (session.fresh && !continuation) {
+      writeGoal(root, { text: prompt }, session);
+      appendDecision(root, 'goal set from first user prompt', '', session);
+    } else if (state.fresh && !continuation) {
       // A new session with a substantive new task replaces the old goal.
       // A short "continue" keeps the goal and is journaled instead.
-      writeGoal(root, { text: prompt, replace: true });
-      appendDecision(root, 'goal replaced on new session');
+      writeGoal(root, { text: prompt, replace: true }, session);
+      appendDecision(root, 'goal replaced on new session', '', session);
     } else {
-      appendJournal(root, prompt);
+      appendJournal(root, prompt, session);
     }
-    writeSession(root, { fresh: false });
+    writeSession(root, { fresh: false }, session);
   }
-  const capsule = writeCapsule(root);
+  const capsule = writeCapsule(root, { session });
   recordMetric(root, {
     event: 'prompt_submitted',
     role: 'conductor',
     prompt_chars: prompt.length,
-    goal_chars: String(readGoal(root).text || '').length,
+    goal_chars: String(readGoal(root, session).text || '').length,
     capsule_tokens: estimateTokens(capsule),
-  });
-  writeText(conductorInjection(root, { contractMode: 'injected' }));
+  }, session);
+  writeText(conductorInjection(root, { contractMode: 'injected', session }));
   log(root, { event: EVENT, role: 'conductor', prompt_chars: prompt.length }, config);
 }
 
@@ -331,6 +347,7 @@ async function onPreToolUse(payload, root, config) {
   if (!tool) return;
   const toolInput = payload.tool_input || payload.toolInput || {};
   const agentType = agentTypeOf(payload);
+  const session = sessionOf(payload);
 
   if (agentType) {
     const decision = workerToolDecision(agentType, tool, config);
@@ -349,7 +366,7 @@ async function onPreToolUse(payload, root, config) {
         agent_type: agentType,
         tool,
         gate: 'worker',
-      });
+      }, session);
       denyTool(decision.reason);
     }
     return;
@@ -359,32 +376,32 @@ async function onPreToolUse(payload, root, config) {
   const projectReason = projectGateReason(root, harnessProjectArg(tool, toolInput));
   if (projectReason) {
     log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'project' }, config);
-    recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'project' });
+    recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'project' }, session);
     denyTool(projectReason);
     return;
   }
   const allow = isAllowedConductorTool(tool, toolInput, config);
   if (allow && (tool === 'Agent' || tool === 'Task')) {
-    const verificationReason = verificationGateReason(root, toolInput);
+    const verificationReason = verificationGateReason(root, toolInput, session);
     if (verificationReason) {
       log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'verification' }, config);
-      recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'verification' });
+      recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'verification' }, session);
       denyTool(verificationReason);
       return;
     }
-    const gateReason = dispatchGateReason(root, toolInput);
+    const gateReason = dispatchGateReason(root, toolInput, session);
     if (gateReason) {
       log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'dispatch' }, config);
-      recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'dispatch' });
+      recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'dispatch' }, session);
       denyTool(gateReason);
       return;
     }
   }
   log(root, { event: EVENT, role: 'conductor', tool, allow }, config);
   if (tool === 'Agent' || tool === 'Task') {
-    recordMetric(root, { event: 'dispatch', role: 'conductor', tool, allow });
+    recordMetric(root, { event: 'dispatch', role: 'conductor', tool, allow }, session);
   } else if (!allow) {
-    recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'allowlist' });
+    recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'allowlist' }, session);
   }
   if (!allow) denyTool(conductorDenyReason(tool, config));
 }
@@ -397,6 +414,7 @@ async function onSubagentStart(payload, root, config) {
   if (!policy) return;
   if (!sessionIsConductor(root, config, payload)) return;
 
+  const session = sessionOf(payload);
   const agentId = String(payload.agent_id || payload.agentId || '');
   const jobId = agentId || newJobId('job');
   const role = roleFor(config, agentType);
@@ -406,12 +424,13 @@ async function onSubagentStart(payload, root, config) {
     role,
     status: 'running',
     depth: 1,
-  });
+  }, session);
 
   const injection = workerInjection(root, {
     agentType,
     role,
     jobId,
+    session,
   });
   writeJson(hookJson('SubagentStart', { additionalContext: injection }));
   log(root, {
@@ -427,7 +446,7 @@ async function onSubagentStart(payload, root, config) {
     agent_type: agentType,
     job_id: jobId,
     model: modelOf(payload),
-  });
+  }, session);
 }
 
 async function onSubagentStop(payload, root, config) {
@@ -437,6 +456,7 @@ async function onSubagentStop(payload, root, config) {
   if (!workerPolicy(config, agentType)) return;
   if (!sessionIsConductor(root, config, payload)) return;
 
+  const session = sessionOf(payload);
   const agentId = String(payload.agent_id || payload.agentId || '');
   const rawValue = payload.result
     ?? payload.final_message
@@ -446,7 +466,7 @@ async function onSubagentStop(payload, root, config) {
     ?? payload;
   const raw = extractText(rawValue);
   const parsed = parseEnvelope(raw, config.envelope);
-  const existing = findJobByAgent(root, agentId);
+  const existing = findJobByAgent(root, agentId, session);
   const jobId = existing?.id || agentId || newJobId('job');
 
   const artifact = putArtifact(root, {
@@ -471,8 +491,8 @@ async function onSubagentStop(payload, root, config) {
     error: parsed.ok ? '' : parsed.errors.join('; ').slice(0, 500),
     retryable: !parsed.ok,
     next: parsed.ok ? '' : invalid.next,
-  });
-  if (parsed.ok) syncPlanFromEnvelope(root, parsed.value);
+  }, session);
+  if (parsed.ok) syncPlanFromEnvelope(root, parsed.value, session);
 
   log(root, {
     event: EVENT,
@@ -493,13 +513,14 @@ async function onSubagentStop(payload, root, config) {
     retryable: !parsed.ok,
     result_chars: raw.length,
     result_tokens: estimateTokens(raw),
-  });
+  }, session);
 }
 
 async function onPostToolUse(payload, root, config) {
   if (!config.enabled) return;
 
   const tool = toolNameOf(payload);
+  const session = sessionOf(payload);
   const agentType = agentTypeOf(payload);
   const policy = agentType ? workerPolicy(config, agentType) : null;
   const conductor = !agentType && isConductorSession(root, config, payload);
@@ -528,14 +549,14 @@ async function onPostToolUse(payload, root, config) {
         || input.name
         || '',
       );
-      const reminder = landReminder(root, parsed.value, dispatchedAgent);
+      const reminder = landReminder(root, parsed.value, dispatchedAgent, session);
       if (reminder) {
         parsed.value.next = [parsed.value.next, reminder].filter(Boolean).join(' ');
         parsed.value.warnings = [...(parsed.value.warnings || []), reminder];
       }
       const compact = compactEnvelope(parsed.value, config.envelope.maxTotalChars);
       writeJson(hookJson('PostToolUse', { updatedToolOutput: compact }));
-      syncPlanFromEnvelope(root, parsed.value);
+      syncPlanFromEnvelope(root, parsed.value, session);
       log(root, {
         event: EVENT,
         role: 'conductor',
@@ -554,7 +575,7 @@ async function onPostToolUse(payload, root, config) {
         result_tokens: estimateTokens(raw),
         compact_chars: compact.length,
         compact_tokens: estimateTokens(compact),
-      });
+      }, session);
     } else {
       const invalid = invalidResultEnvelope(parsed.errors.join('; '), raw);
       invalid.data = {
@@ -584,7 +605,7 @@ async function onPostToolUse(payload, root, config) {
         result_tokens: estimateTokens(raw),
         compact_chars: compactInvalid.length,
         compact_tokens: estimateTokens(compactInvalid),
-      });
+      }, session);
     }
     return;
   }
@@ -616,7 +637,7 @@ async function onPostToolUse(payload, root, config) {
         tool,
         bytes,
         mode: config.context.workerOutputMode,
-      });
+      }, session);
       if (config.context.workerOutputMode === 'truncate') {
         writeJson(hookJson('PostToolUse', {
           updatedToolOutput:
@@ -633,7 +654,8 @@ async function onPreCompact(payload, root, config) {
   if (!config.enabled) return;
   if (agentTypeOf(payload)) return;
   if (!isConductorSession(root, config, payload)) return;
-  const capsule = writeCapsule(root);
+  const session = sessionOf(payload);
+  const capsule = writeCapsule(root, { session });
   log(root, { event: EVENT, trigger: payload.trigger || '', capsule_chars: capsule.length }, config);
   recordMetric(root, {
     event: 'compaction',
@@ -641,14 +663,15 @@ async function onPreCompact(payload, root, config) {
     trigger: String(payload.trigger || ''),
     capsule_chars: capsule.length,
     capsule_tokens: estimateTokens(capsule),
-  });
+  }, session);
 }
 
 async function onStop(payload, root, config) {
   if (!config.enabled) return;
   if (agentTypeOf(payload)) return;
   if (!isConductorSession(root, config, payload)) return;
-  const capsule = writeCapsule(root);
+  const session = sessionOf(payload);
+  const capsule = writeCapsule(root, { session });
   if (payload.stop_hook_active) {
     log(root, { event: EVENT, role: 'conductor', stop_hook_active: true, capsule_chars: capsule.length }, config);
     recordMetric(root, {
@@ -656,23 +679,23 @@ async function onStop(payload, root, config) {
       role: 'conductor',
       stop_hook_active: true,
       capsule_tokens: estimateTokens(capsule),
-    });
+    }, session);
     return;
   }
-  const brief = readBrief(root);
+  const brief = readBrief(root, session);
   if (String(brief?.profile || '') !== 'code') {
     log(root, { event: EVENT, role: 'conductor', capsule_chars: capsule.length }, config);
     recordMetric(root, {
       event: 'session_stop',
       role: 'conductor',
       capsule_tokens: estimateTokens(capsule),
-    });
+    }, session);
     return;
   }
   const unlanded = [];
-  for (const [id, entry] of Object.entries(readWorktrees(root).worktrees || {})) {
+  for (const [id, entry] of Object.entries(readWorktrees(root, session).worktrees || {})) {
     if (!entry?.path || String(entry.status || 'active') === 'landed') continue;
-    const diff = diffWorktree(root, id, { includePatch: false });
+    const diff = diffWorktree(root, id, { includePatch: false, session });
     if (diff.ok && diff.changed_count > 0) unlanded.push(id);
   }
   if (unlanded.length > 0) {
@@ -687,7 +710,7 @@ async function onStop(payload, root, config) {
       blocked: true,
       unlanded: unlanded.length,
       capsule_tokens: estimateTokens(capsule),
-    });
+    }, session);
     return;
   }
   log(root, { event: EVENT, role: 'conductor', capsule_chars: capsule.length }, config);
@@ -696,7 +719,7 @@ async function onStop(payload, root, config) {
     role: 'conductor',
     blocked: false,
     capsule_tokens: estimateTokens(capsule),
-  });
+  }, session);
 }
 
 function autoRegister(payload) {

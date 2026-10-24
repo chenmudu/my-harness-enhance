@@ -238,17 +238,27 @@ ZCode 特定契约：
   projects/<hash>/
     config.json                         # conductor mode, capability config, logging
     capabilities.json                   # resolved role -> native agent mapping
-    goal.json                           # canonical goal/acceptance/constraints
-    plan.json                           # task graph
     decisions.jsonl                     # append-only decisions
-    jobs.json                           # worker routing/status
-    capsule.md                          # compact state injected into the conductor
+    sessions.json                       # host session -> id, host_pid, cwd, last_seen
     artifacts/                          # evidence (local; may contain secrets)
     logs/                               # errors-only by default
     metrics.jsonl
+    sessions/<sid>/
+      goal.json                         # canonical goal/acceptance/constraints
+      brief.json                        # shared brief for this session
+      plan.json                         # task graph
+      jobs.json                         # worker routing/status
+      session.json                      # current session role/model/source
+      last-check.json                   # durable deterministic check result
+      capsule.md                        # compact state injected into the conductor
+      journal.md                        # follow-up prompts
+      worktrees.json                    # task id -> path, head, status
+  worktrees/<projectKey>/<sessionKey>/<task_id>
   legacy/                               # migrated old .router dirs
 ```
 
+- 工作状态按会话放在 `sessions/<sid>/` 下；config、capabilities、
+  decisions、artifacts、metrics、`sessions.json` 和 logs 是共享的。
 - 项目仓库里没有 `.router`。
 - `logs/` 默认 **errors-only**；想在
   `config.json` 里设 `logging: "decisions"` 可做完整的决策审计，设 `"off"` 则关闭。
@@ -262,7 +272,7 @@ ZCode 特定契约：
 ## 6. 验证
 
 ```bash
-node --test                 # 222 tests
+node --test                 # 235 tests
 node bin/mhe.mjs bench      # main-context simulation
 node bin/mhe.mjs demo       # state/contract/artifact demo
 node bin/mhe.mjs doctor --root "<project>"

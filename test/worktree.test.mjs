@@ -36,6 +36,10 @@ import {
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-wt-home-'),
 );
+// Keep the suite hermetic when an ambient hook/MCP parent leaks these vars.
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.resolve(HERE, '..', 'src', 'adapters', 'qoder', 'mcp', 'recall-server.mjs');
@@ -96,7 +100,11 @@ function npmAvailable() {
 
 function runRpc(root, messages) {
   const input = `${messages.map((message) => JSON.stringify(message)).join('\n')}\n`;
-  const env = { ...process.env, MY_HARNESS_ENHANCE_PROJECT: root };
+  const env = { ...process.env };
+  delete env.MY_HARNESS_ENHANCE_PROJECT;
+  delete env.MY_HARNESS_ENHANCE_SESSION;
+  delete env.MY_HARNESS_ENHANCE_GLOBAL;
+  env.MY_HARNESS_ENHANCE_PROJECT = root;
   const result = spawnSync(process.execPath, [SERVER], {
     input,
     cwd: root,
@@ -125,10 +133,14 @@ function payload(response) {
 
 /** Run the Qoder hook against a registered project root (see hooks.test.mjs). */
 function runHook(root, event, payloadValue) {
+  const env = { ...process.env };
+  delete env.MY_HARNESS_ENHANCE_PROJECT;
+  delete env.MY_HARNESS_ENHANCE_SESSION;
+  delete env.MY_HARNESS_ENHANCE_GLOBAL;
   const result = spawnSync(process.execPath, [HOOK, event], {
     input: JSON.stringify(payloadValue),
     cwd: root,
-    env: { ...process.env },
+    env,
     encoding: 'utf8',
   });
   assert.equal(result.status, 0, result.stderr);

@@ -18,7 +18,7 @@ brief + parallel workers -> deterministic check -> accept (or targeted fix)
 
 ## 1. brief
 
-`enhance_brief` 把 brief 存入 `~/.my-harness-enhance/projects/<hash>/brief.json`，并
+`enhance_brief` 把 brief 存入 `~/.my-harness-enhance/projects/<hash>/sessions/<sid>/brief.json`，并
 把它的紧凑形式注入每个 worker。
 
 字段：

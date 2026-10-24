@@ -6,7 +6,13 @@ import { enableProject, disableProject, ensureState, loadConfig, saveConfig, sta
 import { buildCapsule, writeCapsule } from '../src/core/capsule.mjs';
 import { putArtifact } from '../src/core/artifacts.mjs';
 import { benchmarkReport, defaultScenarios, summarizeMetrics } from '../src/core/metrics.mjs';
-import { readJobs, readMetrics, storePaths } from '../src/core/store.mjs';
+import {
+  legacyStateFiles,
+  readJobs,
+  readMetrics,
+  sessionKey,
+  storePaths,
+} from '../src/core/store.mjs';
 import { summarizeWorkers } from '../src/core/capabilities.mjs';
 import { enhanceHome, projectKey } from '../src/core/state-root.mjs';
 import { runDemo } from '../src/bench/demo.mjs';
@@ -50,12 +56,12 @@ Usage:
   mhe adapters [--json]
   mhe capabilities [--root <project>]
   mhe init [--root <project>]
-  mhe state [--root <project>]
+  mhe state [--root <project>] [--session <id>]
   mhe reset [--root <project>]
-  mhe capsule [--root <project>]
+  mhe capsule [--root <project>] [--session <id>]
   mhe artifact <file> [--kind <kind>] [--summary <text>]
   mhe metrics [--root <project>]
-  mhe report [--root <project>] [--json] [--limit <n>]
+  mhe report [--root <project>] [--session <id>] [--json] [--limit <n>]
   mhe enable|disable [--root <project>]
   mhe bench [--json]
   mhe demo
@@ -315,10 +321,17 @@ function cmdToggle(args, enabled) {
 
 function cmdState(args) {
   const root = rootFrom(args);
-  const paths = storePaths(root);
-  const capsule = buildCapsule(root);
-  const jobs = readJobs(root).jobs;
-  process.stdout.write(`state dir: ${paths.dir}\n\n${capsule}\n\n`);
+  const session = args.session ? sessionKey(args.session) : '';
+  const paths = storePaths(root, session);
+  const capsule = buildCapsule(root, { session });
+  const jobs = readJobs(root, session).jobs;
+  process.stdout.write(`state dir: ${paths.dir}\n`);
+  if (session) process.stdout.write(`session: ${session}\n`);
+  const legacy = legacyStateFiles(root);
+  if (legacy.length) {
+    process.stdout.write(`legacy unsharded state: ${legacy.join(', ')} (kept; sessions copy it on start)\n`);
+  }
+  process.stdout.write(`\n${capsule}\n\n`);
   process.stdout.write('jobs:\n');
   if (jobs.length === 0) process.stdout.write('(none)\n');
   for (const job of jobs.slice(-20)) {
@@ -354,7 +367,8 @@ function cmdReset(args) {
 
 function cmdCapsule(args) {
   const root = rootFrom(args);
-  const capsule = writeCapsule(root);
+  const session = args.session ? sessionKey(args.session) : '';
+  const capsule = writeCapsule(root, { session });
   process.stdout.write(`${capsule}\n`);
 }
 
@@ -398,19 +412,26 @@ function cmdMetrics(args) {
 function cmdReport(args) {
   const root = rootFrom(args);
   const limit = Number(args.limit) > 0 ? Number(args.limit) : 2000;
+  const session = args.session ? sessionKey(args.session) : '';
   const metrics = readMetrics(root, limit);
-  const summary = summarizeMetrics(metrics);
+  const summary = summarizeMetrics(metrics, { session });
   if (args.json) {
-    process.stdout.write(`${JSON.stringify({ root, summary }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ root, session: session || null, summary }, null, 2)}\n`);
     return;
   }
 
   const lines = [];
   lines.push(`report: ${root}`);
+  if (session) lines.push(`session: ${session}`);
   lines.push(`entries: ${summary.entries}${summary.firstAt ? ` (${summary.firstAt} -> ${summary.lastAt})` : ''}`);
   if (summary.entries === 0) {
     lines.push('');
     lines.push('No hook metrics recorded yet; the next conductor session writes them.');
+  }
+
+  const shards = Object.entries(summary.sessions || {}).sort((a, b) => b[1] - a[1]);
+  if (shards.length) {
+    lines.push(`sessions: ${shards.map(([id, count]) => `${id}=${count}`).join(', ')}`);
   }
 
   lines.push('');

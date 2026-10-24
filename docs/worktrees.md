@@ -11,23 +11,26 @@ automatic discovery of `npm` verification scripts or `node --test`.
 ## 1. Where worktrees live
 
 ```text
-~/.my-harness-enhance/worktrees/<projectKey>/<task_id>
+~/.my-harness-enhance/worktrees/<projectKey>/<sessionKey>/<task_id>
 ```
 
 The directory is outside the target repository working tree, so no task
 leaks files into the shared checkout. Git keeps its own bookkeeping in the
 repository's `.git/worktrees/`; nothing else is written into the repo.
 Respects `MY_HARNESS_ENHANCE_HOME` overrides.
+New worktrees use the session directory; the old
+`worktrees/<projectKey>/<task_id>` path stays readable for existing worktrees.
 
-Registry: `~/.my-harness-enhance/projects/<hash>/worktrees.json` maps task id
-to `{ path, head, created_at, status }`, written atomically under the state
-lock.
+Registry: `~/.my-harness-enhance/projects/<hash>/sessions/<sid>/worktrees.json`
+maps task id to `{ path, head, created_at, status }`, written atomically under
+the state lock. The legacy project-level `worktrees.json` is read as a fallback
+when a session registry does not exist yet.
 
 ## 2. `enhance_worktree` (MCP tool)
 
 Actions: `create`, `list`, `diff`, `land`, `remove`. Arguments: `project`,
-`action`, `task_id` (required except for `list`). No arbitrary shell is
-exposed.
+`session` (from the capsule), `action`, `task_id` (required except for `list`).
+No arbitrary shell is exposed.
 
 `create` enforces three gates, in order:
 

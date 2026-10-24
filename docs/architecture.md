@@ -198,19 +198,32 @@ User-level state (nothing in the project repo):
   projects/<hash>/
     config.json                    conductor mode, capabilities, logging
     capabilities.json              resolved role -> native agent mapping
-    goal.json                      canonical goal, acceptance, constraints
-    plan.json                      task graph
-    decisions.jsonl                append-only decisions
-    jobs.json                      job status, agent id/type/role, envelope summary
-    session.json                   current session role/model/source
-    capsule.md                     compact state injected into the conductor
+    decisions.jsonl                append-only decisions (optional session)
+    sessions.json                  host session -> id, host_pid, cwd, last_seen
     artifacts/                     content-addressed raw evidence
-    metrics.jsonl                  hook/routing metrics
+    metrics.jsonl                  hook/routing metrics (each event has session)
     logs/                          errors-only by default
+    .lock                          project-level write lock
+    sessions/<sid>/
+      goal.json                    canonical goal, acceptance, constraints
+      brief.json                   shared brief for this session
+      plan.json                    task graph
+      jobs.json                    job status, agent id/type/role, envelope summary
+      session.json                 current session role/model/source
+      last-check.json              durable deterministic check result
+      capsule.md                   compact state injected into the conductor
+      journal.md                   follow-up prompts
+      worktrees.json               task id -> path, head, status
+  worktrees/<projectKey>/<sessionKey>/<task_id>
   legacy/                          migrated old .router dirs
 ```
 
 The state store is the source of truth. The transcript is not.
+
+Working state is per session under `sessions/<sid>/`; config, capabilities,
+decisions, artifacts, metrics, `sessions.json`, logs, and the lock are shared.
+Two sessions may run concurrently: they contend only on shared append/write
+paths, while goal, plan, jobs, capsule, and worktrees stay isolated.
 
 `capsule.md` is the compact state injected into the conductor; `jobs.json` is the
 routing table; `logs/hooks.jsonl` is optional (errors-only by default) and
@@ -218,21 +231,26 @@ contains no prompts or raw outputs; `artifacts/` holds raw evidence. These are
 created only for conductor sessions and mapped native workers, not for unrelated
 sessions.
 
+Pre-sharding working files at the project level stay readable; the first
+session write copies them into that session's directory and never deletes them.
+Git worktrees live at `worktrees/<projectKey>/<sessionKey>/<task_id>`.
+
 ### 3.1 Capsule projection
 
 `capsule.md` is rebuilt from state, never summarized from the transcript. Its
 budget is `config.context.maxCapsuleTokens` (default 1800 tokens).
 
-- **Pinned:** PROJECT (the exact path passed to every `enhance_*` call), NEXT
+- **Pinned:** PROJECT (the exact path passed to every `enhance_*` call),
+  SESSION (the shard id; tools that accept `session` must receive it), NEXT
   (first in-progress task, else the first pending task, else the oldest active
   job), and LAST CHECK.
 - **Ordered by priority:** GOAL, ACCEPTANCE, CONSTRAINTS, WORKERS, BRIEF, PLAN,
   ACTIVE JOBS, WORKTREES, RECENT DECISIONS, ARTIFACTS.
 - **Bounded inputs:** PLAN 30 tasks, ACTIVE JOBS 12, WORKTREES 10, RECENT
   DECISIONS 8, ARTIFACTS 10.
-- **Degradation:** PLAN is truncated inside the budget with `(N more tasks
-  omitted)`; skipped sections are named in `OMITTED`; a final hard cap appends
-  `…[capsule truncated]`.
+- **Degradation:** PLAN is truncated inside the budget and appends
+  `(N more tasks omitted)`; skipped sections are named in `OMITTED`; a final
+  hard cap appends `…[capsule truncated]`.
 
 Pinned sections are inserted first, so the conductor keeps its working set even
 when the rest does not fit.

@@ -15,6 +15,10 @@ import { writeGlobalConfig } from '../src/core/global.mjs';
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-hooks-home-'),
 );
+// Keep the suite hermetic when an ambient hook/MCP parent leaks these vars.
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(HERE, '..', 'src', 'adapters', 'qoder', 'hooks', 'hook.mjs');
@@ -31,10 +35,14 @@ function setupRoot() {
 }
 
 function runHook(root, event, payload) {
+  const env = { ...process.env };
+  delete env.MY_HARNESS_ENHANCE_PROJECT;
+  delete env.MY_HARNESS_ENHANCE_SESSION;
+  delete env.MY_HARNESS_ENHANCE_GLOBAL;
   const result = spawnSync(process.execPath, [HOOK, event], {
     input: JSON.stringify(payload),
     cwd: root,
-    env: { ...process.env },
+    env,
     encoding: 'utf8',
   });
   return { stdout: result.stdout || '', stderr: result.stderr || '', status: result.status };
@@ -662,6 +670,7 @@ test('hooks write counts and sizes to metrics without prompts or summaries', () 
     result: JSON.stringify(valid),
   });
   runHook(root, 'PostToolUse', {
+    session_id: 'session_metrics',
     model: 'qfmodel',
     tool_name: 'Agent',
     tool_input: { subagent_type: 'Explore' },
@@ -671,6 +680,10 @@ test('hooks write counts and sizes to metrics without prompts or summaries', () 
   runHook(root, 'Stop', { session_id: 'session_metrics' });
 
   const metrics = readMetrics(root, 100);
+  assert.ok(
+    metrics.every((entry) => entry.session === 'sessionmetrics'),
+    JSON.stringify(metrics.map((entry) => [entry.event, entry.session])),
+  );
   const events = metrics.map((entry) => entry.event);
   for (const event of ['session_start', 'prompt_submitted', 'job_start', 'job_stop', 'agent_result', 'compaction', 'session_stop']) {
     assert.ok(events.includes(event), `${event} missing`);
@@ -678,6 +691,7 @@ test('hooks write counts and sizes to metrics without prompts or summaries', () 
 
   const started = metrics.find((entry) => entry.event === 'session_start');
   assert.equal(started.session_id, 'session_metrics');
+  assert.equal(started.session, 'sessionmetrics');
   assert.equal(started.source, 'startup');
   assert.ok(started.capsule_tokens > 0);
 

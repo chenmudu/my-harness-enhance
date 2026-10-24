@@ -13,8 +13,10 @@ adapter 级别的细节。
 | `~/.qoder/` | Qoder 国际版 |
 | `QODER_CONFIG_DIR` | 显式覆盖 |
 
-状态是用户级的：`~/.my-harness-enhance/projects/<hash>/`。项目仓库
-里没有 `.router`。
+状态是用户级的：`~/.my-harness-enhance/projects/<hash>/` 存放共享状态，
+`sessions/<sid>/` 存放单个会话的工作状态。项目仓库里没有 `.router`。
+Worktree 位于
+`~/.my-harness-enhance/worktrees/<projectKey>/<sessionKey>/<task_id>`。
 
 `enhance_capabilities` 还会返回 `server` 块（`pid`、`ppid`、
 `started_at`、`global`、`project_env`），
@@ -109,26 +111,44 @@ Server：`harness-enhance`（stdio）。工具：
 `enhance_job`, `enhance_recall`, `enhance_artifact`, `enhance_capabilities`,
 `enhance_worker_contract`.
 
+会话状态工具（`enhance_state`、`enhance_goal`、`enhance_brief`、
+`enhance_plan`、`enhance_check`、`enhance_job`、`enhance_worktree`）接受
+可选的 `session`。解析顺序：`args.session`，然后
+`MY_HARNESS_ENHANCE_SESSION`，然后是 `host_pid` 等于 MCP 进程父进程的
+最新 `sessions.json` 条目，最后是唯一的 `sessions/<sid>/` 目录。
+多个候选项是错误；请传入 SESSION 值。
+
 conductor 只看到这些工具；已有的 MCP/connectors 仍然是 worker 的工具。
 
 ## 状态
 
 ```
-~/.my-harness-enhance/projects/<hash>/
-  config.json
-  capabilities.json
-  goal.json
-  plan.json
-  decisions.jsonl
-  jobs.json
-  capsule.md
-  artifacts/
-  logs/            # errors-only by default
-  metrics.jsonl
+~/.my-harness-enhance/
+  projects/<hash>/
+    config.json
+    capabilities.json
+    decisions.jsonl
+    sessions.json
+    metrics.jsonl
+    artifacts/
+    logs/            # errors-only by default
+    sessions/<sid>/
+      goal.json
+      brief.json
+      plan.json
+      jobs.json
+      session.json
+      last-check.json
+      capsule.md
+      journal.md
+      worktrees.json
+  worktrees/<projectKey>/<sessionKey>/<task_id>
 ```
 
 `logs/` 默认只记录错误，除非在 `config.json` 中设置了 `logging: "decisions"`。
 `capsule.md` 是紧凑的工作状态，不是聊天记录。
+`goal.json`、`plan.json`、`jobs.json`、`capsule.md` 和 `worktrees.json` 是
+会话级的；decisions、artifacts、metrics 和 `sessions.json` 是共享的。
 
 ## 验证
 

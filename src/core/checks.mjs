@@ -478,7 +478,7 @@ export function runBriefChecks(root, brief, config, checkerIds = null, options =
   // to the main checkout and green-light unreviewed work.
   let worktree = '';
   if (options.worktree) {
-    const located = validateWorktree(root, options.worktree);
+    const located = validateWorktree(root, options.worktree, options.session || '');
     if (!located.ok) {
       return {
         version: 1,

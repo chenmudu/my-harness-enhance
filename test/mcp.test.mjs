@@ -12,6 +12,10 @@ import { resolveCapabilities } from '../src/core/capabilities.mjs';
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-mcp-home-'),
 );
+// Keep the suite hermetic when an ambient hook/MCP parent leaks these vars.
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.resolve(HERE, '..', 'src', 'adapters', 'qoder', 'mcp', 'recall-server.mjs');
@@ -30,6 +34,8 @@ function makeRoot() {
 function runRpc(root, messages, { projectEnv = true } = {}) {
   const input = messages.map((message) => JSON.stringify(message)).join('\n') + '\n';
   const env = { ...process.env };
+  delete env.MY_HARNESS_ENHANCE_SESSION;
+  delete env.MY_HARNESS_ENHANCE_GLOBAL;
   if (projectEnv) env.MY_HARNESS_ENHANCE_PROJECT = root;
   else delete env.MY_HARNESS_ENHANCE_PROJECT;
   const result = spawnSync(process.execPath, [SERVER], {

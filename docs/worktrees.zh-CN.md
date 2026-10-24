@@ -11,23 +11,26 @@
 ## 1. worktree 放在哪里
 
 ```text
-~/.my-harness-enhance/worktrees/<projectKey>/<task_id>
+~/.my-harness-enhance/worktrees/<projectKey>/<sessionKey>/<task_id>
 ```
 
 这个目录位于目标仓库的工作树（working tree）之外，因此不会有任务把文件泄漏
 进共用的检出。Git 把自己的记账信息放在仓库的
 `.git/worktrees/` 里；除此之外不会向仓库写入任何东西。
 遵循 `MY_HARNESS_ENHANCE_HOME` 的覆盖设置。
+新 worktree 使用会话目录；旧的
+`worktrees/<projectKey>/<task_id>` 路径对已有 worktree 保持可读。
 
-注册表（registry）：`~/.my-harness-enhance/projects/<hash>/worktrees.json` 把 task id
-映射到 `{ path, head, created_at, status }`，并在状态锁（state lock）下原子
-写入。
+注册表（registry）：
+`~/.my-harness-enhance/projects/<hash>/sessions/<sid>/worktrees.json`
+把 task id 映射到 `{ path, head, created_at, status }`，并在状态锁（state lock）下原子
+写入。当会话注册表不存在时，回退读取项目级的旧 `worktrees.json`。
 
 ## 2. `enhance_worktree`（MCP 工具）
 
 动作：`create`、`list`、`diff`、`land`、`remove`。参数：`project`、
-`action`、`task_id`（除 `list` 外均必填）。不会对外暴露
-任意 shell 命令。
+`session`（来自 capsule）、`action`、`task_id`（除 `list` 外均必填）。
+不会对外暴露任意 shell 命令。
 
 `create` 会按顺序强制三道门禁（gate）：
 

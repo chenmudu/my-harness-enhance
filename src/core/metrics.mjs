@@ -1,3 +1,5 @@
+import { sessionKey } from './store.mjs';
+
 export function byteLength(text) {
   return Buffer.byteLength(String(text ?? ''), 'utf8');
 }
@@ -207,11 +209,22 @@ function metricStats(values) {
 /**
  * Aggregate hook-written metric entries. Only counts and sizes are summarized;
  * prompts, summaries, and raw tool output are never recorded by the hooks.
+ * Passing session filters to one shard; without it every entry is counted and
+ * the per-session totals are reported under `sessions`.
  */
-export function summarizeMetrics(metrics = []) {
-  const entries = Array.isArray(metrics)
-    ? metrics.filter((entry) => entry && typeof entry === 'object')
-    : [];
+export function summarizeMetrics(metrics = [], { session = '' } = {}) {
+  const filter = String(session || '').trim();
+  const key = filter ? sessionKey(filter) : '';
+  const entries = (Array.isArray(metrics) ? metrics : [])
+    .filter((entry) => entry && typeof entry === 'object')
+    .filter((entry) => !key || entry.session === key);
+  const sessions = {};
+  if (!key) {
+    for (const entry of entries) {
+      const id = String(entry.session || '');
+      if (id) sessions[id] = (sessions[id] || 0) + 1;
+    }
+  }
   const events = {};
   const denials = {};
   const statuses = {};
@@ -274,6 +287,8 @@ export function summarizeMetrics(metrics = []) {
   }
 
   return {
+    session: key || null,
+    sessions,
     entries: entries.length,
     firstAt,
     lastAt,

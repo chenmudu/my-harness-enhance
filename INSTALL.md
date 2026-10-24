@@ -240,17 +240,27 @@ machine's `~/.my-harness-enhance` state.
   projects/<hash>/
     config.json                         # conductor mode, capability config, logging
     capabilities.json                   # resolved role -> native agent mapping
-    goal.json                           # canonical goal/acceptance/constraints
-    plan.json                           # task graph
     decisions.jsonl                     # append-only decisions
-    jobs.json                           # worker routing/status
-    capsule.md                          # compact state injected into the conductor
+    sessions.json                       # host session -> id, host_pid, cwd, last_seen
     artifacts/                          # evidence (local; may contain secrets)
     logs/                               # errors-only by default
     metrics.jsonl
+    sessions/<sid>/
+      goal.json                         # canonical goal/acceptance/constraints
+      brief.json                        # shared brief for this session
+      plan.json                         # task graph
+      jobs.json                         # worker routing/status
+      session.json                      # current session role/model/source
+      last-check.json                   # durable deterministic check result
+      capsule.md                        # compact state injected into the conductor
+      journal.md                        # follow-up prompts
+      worktrees.json                    # task id -> path, head, status
+  worktrees/<projectKey>/<sessionKey>/<task_id>
   legacy/                               # migrated old .router dirs
 ```
 
+- Working state is per session under `sessions/<sid>/`; config, capabilities,
+  decisions, artifacts, metrics, `sessions.json`, and logs are shared.
 - No `.router` in the project repository.
 - `logs/` defaults to **errors-only**; set `logging: "decisions"` in
   `config.json` for a full decision audit, or `"off"` to disable.
@@ -264,7 +274,7 @@ machine's `~/.my-harness-enhance` state.
 ## 6. Verification
 
 ```bash
-node --test                 # 222 tests
+node --test                 # 235 tests
 node bin/mhe.mjs bench      # main-context simulation
 node bin/mhe.mjs demo       # state/contract/artifact demo
 node bin/mhe.mjs doctor --root "<project>"

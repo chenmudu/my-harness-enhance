@@ -13,8 +13,10 @@ adapter-level detail.
 | `~/.qoder/` | Qoder international |
 | `QODER_CONFIG_DIR` | explicit override |
 
-State is user-level: `~/.my-harness-enhance/projects/<hash>/`. No `.router` in the
-project repository.
+State is user-level: `~/.my-harness-enhance/projects/<hash>/` holds shared state,
+and `sessions/<sid>/` holds the working state of one session. No `.router` in
+the project repository. Worktrees live under
+`~/.my-harness-enhance/worktrees/<projectKey>/<sessionKey>/<task_id>`.
 
 `enhance_capabilities` also returns a `server` block (`pid`, `ppid`,
 `started_at`, `global`, `project_env`) so two sessions can tell whether they
@@ -109,26 +111,44 @@ Server: `harness-enhance` (stdio). Tools:
 `enhance_job`, `enhance_recall`, `enhance_artifact`, `enhance_capabilities`,
 `enhance_worker_contract`.
 
+Session state tools (`enhance_state`, `enhance_goal`, `enhance_brief`,
+`enhance_plan`, `enhance_check`, `enhance_job`, `enhance_worktree`) accept an
+optional `session`. Resolution order: `args.session`, then
+`MY_HARNESS_ENHANCE_SESSION`, then the newest `sessions.json` entry whose
+`host_pid` is the MCP process parent, then a unique `sessions/<sid>/`
+directory. Multiple candidates are an error; pass the SESSION value.
+
 The conductor sees these; existing MCP/connectors remain worker tools.
 
 ## State
 
 ```
-~/.my-harness-enhance/projects/<hash>/
-  config.json
-  capabilities.json
-  goal.json
-  plan.json
-  decisions.jsonl
-  jobs.json
-  capsule.md
-  artifacts/
-  logs/            # errors-only by default
-  metrics.jsonl
+~/.my-harness-enhance/
+  projects/<hash>/
+    config.json
+    capabilities.json
+    decisions.jsonl
+    sessions.json
+    metrics.jsonl
+    artifacts/
+    logs/            # errors-only by default
+    sessions/<sid>/
+      goal.json
+      brief.json
+      plan.json
+      jobs.json
+      session.json
+      last-check.json
+      capsule.md
+      journal.md
+      worktrees.json
+  worktrees/<projectKey>/<sessionKey>/<task_id>
 ```
 
 `logs/` is errors-only unless `logging: "decisions"` is set in `config.json`.
 `capsule.md` is compact working state, not a transcript.
+`goal.json`, `plan.json`, `jobs.json`, `capsule.md`, and `worktrees.json` are
+session-level; decisions, artifacts, metrics, and `sessions.json` are shared.
 
 ## Validation
 

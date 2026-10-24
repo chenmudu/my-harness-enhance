@@ -18,7 +18,7 @@ brief + parallel workers -> deterministic check -> accept (or targeted fix)
 
 ## 1. Brief
 
-`enhance_brief` stores `~/.my-harness-enhance/projects/<hash>/brief.json` and
+`enhance_brief` stores `~/.my-harness-enhance/projects/<hash>/sessions/<sid>/brief.json` and
 injects a compact form into every worker.
 
 Fields:
