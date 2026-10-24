@@ -2,24 +2,42 @@
 
 > Chinese version: [README.zh-CN.md](README.zh-CN.md).
 
-**A harness-agnostic personal enhancement layer for long-horizon agent work.**
+**A harness-agnostic control plane for long-horizon agent work.**
 
-It keeps one main session as the conductor: the main model judges, routes, accepts, and synthesizes; investigation, execution, verification, and drafting go to isolated native workers. Durable state lives outside the workspace, and a shared brief plus deterministic checks replace the expensive "execute everything, then run a second LLM audit" loop.
+The host harness still runs the agent: model loop, tool runtime, sessions,
+compaction, permissions, and subagents stay native. This layer sits above them.
+It decides what the conductor sees, what gets delegated, what counts as done,
+and what is measured; it owns no model loop and no tool runtime.
 
-It is not a harness replacement or a multi-agent framework. It adds a control plane, a personal agent overlay, and deterministic verification on top of the native harness. The goal is to make long-horizon work faster and more reliable than doing everything in one long session.
+It keeps one main session as the conductor: the main model judges, routes,
+accepts, and synthesizes; investigation, execution, verification, and drafting
+go to isolated native workers. Durable state lives outside the workspace, and a
+shared brief plus deterministic checks replace the expensive "execute
+everything, then run a second LLM audit" loop.
+
+It is not a harness replacement, a multi-agent framework, or a second runtime.
+The goal is to make long-horizon work faster and more reliable than doing
+everything in one long session.
 
 ## What It Is Not
 
 - Not a new agent framework or an agent society.
+- Not a runtime: the host keeps the model loop, tool execution, session storage, compaction, and permissions.
 - Not a Qoder-only tool: Qoder is the first validated adapter; ZCode is the second; Codex, DSH, and other common agent harnesses are adapter targets.
 - Not a target-repo template: it never writes its state or personal agents into a working project repository.
+
+## Boundary
+
+| Host harness owns | mhe owns |
+|---|---|
+| model loop, tool runtime, sessions, compaction, permissions, subagents | policy, envelope contract, capsule/state, deterministic checks, metrics, adapter mapping |
 
 ## Core Model
 
 - **One conductor**: one decision-maker; workers are isolated, stateless, and do not negotiate.
 - **Brief before fan-out**: glossary, format, input hashes, ownership, and checks are shared with every worker.
 - **Checks before acceptance**: structural, numeric, hash, scope, and test checks are code; full semantic audits are only for failures or ambiguity.
-- **State outside the workspace**: runtime state in `~/.my-harness-enhance/`; personal agents in repo/user-level overlays, installed into user-level harness config.
+- **State outside the workspace**: durable state in `~/.my-harness-enhance/`; personal agents in repo/user-level overlays, installed into user-level harness config.
 
 ## Adapters
 
@@ -44,7 +62,7 @@ It is not a harness replacement or a multi-agent framework. It adds a control pl
 - [docs/worktrees.md](docs/worktrees.md) — isolated git worktrees for code tasks.
 - [docs/brief-checks.md](docs/brief-checks.md) — shared brief and deterministic checks.
 - [overlays/README.md](overlays/README.md) — personal agent overlay and safe install/uninstall.
-- [docs/roadmap.md](docs/roadmap.md) — adapter and runtime roadmap.
+- [docs/roadmap.md](docs/roadmap.md) — adapter and control-plane roadmap.
 - [docs/validation.md](docs/validation.md) — local validation record.
 
 ## License

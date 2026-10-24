@@ -8,7 +8,7 @@ This page is the index and authority order for the repository documentation. Whe
 |---|---|---|
 | [../README.md](../README.md) | What this project is, status, and the doc list | Entry point |
 | [../INSTALL.md](../INSTALL.md) | Install, upgrade, rollback, doctor | Commands and install steps |
-| [architecture.md](architecture.md) | Invariants, state model, hook lifecycle | Runtime design |
+| [architecture.md](architecture.md) | Invariants, state model, hook lifecycle | Control-plane design |
 | [adapters.md](adapters.md) | Adapter contract and per-harness capability matrix | Harness support |
 | [qoder-adapter.md](qoder-adapter.md) | Qoder paths, install layout, hook payloads | Qoder-specific setup |
 | [worktrees.md](worktrees.md) | Code worktrees, dispatch gate, land | Code delivery |

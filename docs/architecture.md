@@ -18,7 +18,15 @@ The fix is to change what the main model sees each turn:
 - return only a bounded, structured result;
 - keep the durable state outside the transcript.
 
-## 2. Five layers
+### 1.1 Scope: control plane, not runtime
+
+The host harness owns the model loop, tool execution, session storage,
+compaction, and permissions. This repository owns only the control plane:
+policy, the envelope contract, bounded state/capsule, deterministic checks,
+metrics, and adapter mappings. Using a native mechanism is the default;
+reimplementing a host capability is a defect, not a feature.
+
+## 2. Five control-plane layers
 
 ### 2.1 Economic layer: who pays, who works
 
@@ -247,6 +255,8 @@ not ask the already-degraded main model to summarize its own transcript.
 
 ## 5. What this is not
 
+- It is not a runtime: it does not own the model loop, tool execution, session
+  storage, compaction, or permissions.
 - It is not a multi-agent society. There is one decision-maker.
 - It is not a cross-harness orchestrator in v0.2. One harness, one adapter.
 - It is not a prompt-only convention. Hooks enforce the boundary.

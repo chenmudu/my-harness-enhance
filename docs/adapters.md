@@ -10,6 +10,10 @@ any other harness to implement against. An adapter is allowed to claim less
 than Qoder — the ZCode adapter genuinely does — and it is not allowed to
 claim what it does not do.
 
+An adapter does not run the agent. It maps the control plane onto the host's
+native mechanisms; the host keeps the model loop, tools, sessions, compaction,
+and permissions.
+
 Modules:
 
 | File | Responsibility |

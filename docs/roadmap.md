@@ -42,7 +42,7 @@
 - Remaining: exact per-agent job correlation, result rewrite if ZCode adds it,
   and overlay/skill installation.
 
-### Capability/runtime
+### Capability policy and routing
 
 - Probe-based capability checks (small standardized tasks) cached per
   agent/harness version.

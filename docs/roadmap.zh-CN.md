@@ -41,7 +41,7 @@
 - 剩余：精确的 per-agent job 关联、ZCode 若增加 result rewrite 则接入、
   overlay/skill 安装。
 
-### 能力/运行时
+### 能力策略与路由
 
 - 基于探测的能力验证（小规模标准化任务），按
   agent/harness 版本缓存。

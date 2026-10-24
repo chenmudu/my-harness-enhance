@@ -2,24 +2,42 @@
 
 > 英文版本见 [README.md](README.md)。
 
-**一个面向长周期任务的、跨 harness 的个人增强层。**
+**一个面向长周期任务的、跨 harness 的控制面（control plane）。**
 
-它让主会话保持唯一的 conductor：主模型只判断、路由、验收、综合；调研、执行、验证、起草交给隔离的原生 worker。持久状态放在 workspace 之外，共享 brief + 确定性检查替代“先全部执行，再做一次 LLM 全量审计”的昂贵循环。
+宿主 harness 仍然负责运行 agent：模型循环、工具运行时、会话、
+压缩、权限和子 agent 都保持原生。这一层位于它们之上，
+决定 conductor 看到什么、派发什么、什么算完成、度量什么；
+它不拥有模型循环，也不拥有工具运行时。
 
-它不是 harness 替代品，也不是多 agent 框架。它在原生 harness 之上加控制面、个人 agent overlay 和确定性验证。目标不是单纯缩小 context，而是让长周期任务比单会话全包更快、更可靠。
+它让主会话保持唯一的 conductor：主模型只判断、路由、验收、
+综合；调研、执行、验证、起草交给隔离的原生 worker。
+持久状态放在 workspace 之外，
+共享 brief + 确定性检查替代
+“先全部执行，再做一次 LLM 全量审计”的昂贵循环。
+
+它不是 harness 替代品，不是多 agent 框架，
+也不是第二套运行时。目标是让长周期任务
+比单会话全包更快、更可靠。
 
 ## 它不是什么
 
 - 不是新的 agent 框架，也不是 agent 社会。
+- 不是运行时：模型循环、工具执行、会话存储、压缩和权限都归宿主。
 - 不是 Qoder 专用工具：Qoder 是第一个验证通过的 adapter；ZCode 是第二个；Codex、DSH 及其他常用 agent harness 是 adapter 目标。
 - 不是目标仓库模板：状态和个人 agent 永不写入正在工作的项目仓库。
+
+## 边界
+
+| 宿主 harness 负责 | mhe 负责 |
+|---|---|
+| 模型循环、工具运行时、会话、压缩、权限、子 agent | 策略、envelope 契约、capsule/状态、确定性检查、度量、adapter 映射 |
 
 ## 核心模型
 
 - **一个 conductor**：唯一决策者；worker 隔离、无状态、不协商。
 - **fan-out 前先有 brief**：术语表、格式、输入 hash、ownership、检查项共享给每个 worker。
 - **验收前先检查**：结构、数字、hash、scope、测试检查由代码完成；全量语义审计只在失败或歧义时触发。
-- **状态在 workspace 之外**：运行时状态在 `~/.my-harness-enhance/`；个人 agent 在 repo/用户级 overlay，安装到用户级 harness 配置。
+- **状态在 workspace 之外**：持久状态在 `~/.my-harness-enhance/`；个人 agent 在 repo/用户级 overlay，安装到用户级 harness 配置。
 
 ## Adapter
 
@@ -44,7 +62,7 @@
 - [docs/worktrees.md](docs/worktrees.md) — 代码任务的隔离 git worktree。
 - [docs/brief-checks.md](docs/brief-checks.md) — 共享 brief 与确定性检查。
 - [overlays/README.md](overlays/README.md) — 个人 agent overlay 与安全安装/卸载。
-- [docs/roadmap.md](docs/roadmap.md) — adapter 与运行时路线图。
+- [docs/roadmap.md](docs/roadmap.md) — adapter 与控制面路线图。
 - [docs/validation.md](docs/validation.md) — 本机验证记录。
 
 ## License
