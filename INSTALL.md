@@ -222,7 +222,7 @@ ZCode-specific contract:
 | macOS | `~/.qoder-cn` / `~/.qoder` | `~/.my-harness-enhance` | same hooks; `process.execPath` |
 | Linux | `~/.qoder-cn` / `~/.qoder` | `~/.my-harness-enhance` | same hooks; `process.execPath` |
 
-There is no hardcoded `C:\` path in the code. The installer uses
+The code contains no hardcoded drive-letter path. The installer uses
 `os.homedir()` and `process.execPath`; the hook command is generated for the
 current platform.
 

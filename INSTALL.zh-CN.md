@@ -220,9 +220,9 @@ ZCode 特定契约：
 | macOS | `~/.qoder-cn` / `~/.qoder` | `~/.my-harness-enhance` | 相同的 hooks；`process.execPath` |
 | Linux | `~/.qoder-cn` / `~/.qoder` | `~/.my-harness-enhance` | 相同的 hooks；`process.execPath` |
 
-代码里没有硬编码的 `C:\` 路径。安装器使用
-`os.homedir()` 和 `process.execPath`；hook 命令是按
-当前平台生成的。
+代码里没有硬编码的盘符路径。安装器使用
+`os.homedir()` 和 `process.execPath`；hook 命令按当前平台
+生成。
 
 多台机器：在每台机器上各自执行这份 runbook。项目源码是可移植的；
 状态/注册表是每台机器本地各一份。不要把另一台机器的
