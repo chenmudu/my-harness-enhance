@@ -7,7 +7,7 @@ This records what was actually run on this machine, not what is planned.
 ## 1. Test suite
 
 ```bash
-cd D:/project/github/my-harness-enhance
+cd <repo>
 node --test
 ```
 
@@ -58,14 +58,14 @@ Benchmark (main context only):
 ## 3. Qoder installation (v0.2, auto, native reuse)
 
 ```bash
-node bin/mhe.mjs install qoder --root "D:/project/github/my-harness-enhance"
+node bin/mhe.mjs install qoder --root <repo>
 ```
 
 Observed:
 
-- config dir: `C:\Users\Administrator\.qoder-cn`
-- state dir: `C:\Users\Administrator\.my-harness-enhance\projects\7aec27593e59fcf2`
-- settings backup: `C:\Users\Administrator\.qoder-cn\settings.json.harness-enhance-20261018060404.bak`
+- config dir: `~/.qoder-cn`
+- state dir: `~/.my-harness-enhance/projects/<key>`
+- settings backup: `~/.qoder-cn/settings.json.harness-enhance-<timestamp>.bak`
 - capability mapping:
   - investigate -> `Explore`
   - plan -> `Explore`
@@ -95,12 +95,12 @@ node bin/mhe.mjs install qoder --global
 Observed:
 
 - `~/.my-harness-enhance/global.json` -> `autoRegister: true`,
-  `configDir: C:/Users/Administrator/.qoder-cn`;
+  `configDir: ~/.qoder-cn`;
 - Qoder MCP `harness-enhance` env -> `MY_HARNESS_ENHANCE_GLOBAL=1` (no fixed
   project);
 - 8 hooks installed globally; settings backup
   `settings.json.harness-enhance-20261018103042.bak`;
-- `doctor --root D:/project/github/blog` (an unregistered workspace) -> ok,
+- `doctor --root <workspace>` (an unregistered workspace) -> ok,
   showing global mode and "auto on first session";
 - auto-register is restricted to **new** SessionStart (`startup`/`new`/`clear`).
   A PreToolUse-only test on an unregistered workspace stayed silent (test added).
@@ -110,9 +110,9 @@ Observed:
   `MY_HARNESS_ENHANCE_PROJECT`, then the MCP process cwd; the global
   `active.json` is no longer a fallback. Capsule includes `PROJECT`.
 - Qoder was restarted at 18:33:37; the new MCP server process started at 18:33:44
-  (PID 19708) from the global code.
+  (a separate process) from the global code.
 - First global workspace session `aebbad10-e969-468e-bbfc-202aa5d9c5a2`
-  (cwd `D:\project\github`, model `qfmodel`): auto-registered, conductor
+  (cwd `<workspace>`, model `qfmodel`): auto-registered, conductor
   policy/capsule created, and the conductor delegated to native `Explore`.
 - First Explore result was rejected because evidence entries were file paths
   (old strict handle check). Fixed: evidence accepts paths/URLs; only artifacts
@@ -129,7 +129,7 @@ Observed:
 ## 4. Installed-hook simulation (native agents)
 
 Using the exact commands from `settings.json`, with `cwd` in the project and
-`model=qfmodel` (auto mode, no selection):
+`model=qfmodel`:
 
 - `SessionStart` -> `MY-HARNESS-ENHANCE CONDUCTOR` policy + capsule + WORKERS
   mapping.
@@ -153,7 +153,7 @@ Using the exact commands from `settings.json`, with `cwd` in the project and
 ## 5. First real Qoder session (60c87313)
 
 Session: `60c87313-cdf1-4a4e-a38d-e1ffcdf2d2b9`, cwd
-`D:\project\github\my-harness-enhance`, model `qfmodel`, created 18:16:30.
+`<repo>`, model `qfmodel`, created 18:16:30.
 
 Observed:
 
@@ -192,7 +192,7 @@ Fixes made during/after this session:
 ## 6. Write + verification session (c1f3a1b9)
 
 Session: `c1f3a1b9-406a-435d-98a6-1766e2cd92ae`, cwd
-`D:\project\github\my-harness-enhance`, model `qfmodel`.
+`<repo>`, model `qfmodel`.
 
 Observed:
 
@@ -259,5 +259,4 @@ Two review claims were narrowed:
 - Old `bash-delegate` hook interaction when the conductor model is qwen 3.5
   9b/7b (warning is printed; use a non-9B model or remove the old hook).
 - ZCode adapter and macOS/Linux real-machine runs.
-- The repository still has no `.git`; only mtime is available for change
-  history. Initialize version control before public release.
+- The repository now has git history; entries before 2026-10-19 predate it.

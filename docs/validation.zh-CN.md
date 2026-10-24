@@ -7,7 +7,7 @@
 ## 1. 测试套件
 
 ```bash
-cd D:/project/github/my-harness-enhance
+cd <repo>
 node --test
 ```
 
@@ -58,14 +58,14 @@ benchmark（只算主 context）：
 ## 3. Qoder 安装（v0.2、auto、原生复用）
 
 ```bash
-node bin/mhe.mjs install qoder --root "D:/project/github/my-harness-enhance"
+node bin/mhe.mjs install qoder --root <repo>
 ```
 
 实际观测：
 
-- 配置目录：`C:\Users\Administrator\.qoder-cn`
-- 状态目录：`C:\Users\Administrator\.my-harness-enhance\projects\7aec27593e59fcf2`
-- settings 备份：`C:\Users\Administrator\.qoder-cn\settings.json.harness-enhance-20261018060404.bak`
+- 配置目录：`~/.qoder-cn`
+- 状态目录：`~/.my-harness-enhance/projects/<key>`
+- settings 备份：`~/.qoder-cn/settings.json.harness-enhance-<timestamp>.bak`
 - 能力映射：
   - investigate -> `Explore`
   - plan -> `Explore`
@@ -95,12 +95,12 @@ node bin/mhe.mjs install qoder --global
 实际观测：
 
 - `~/.my-harness-enhance/global.json` -> `autoRegister: true`,
-  `configDir: C:/Users/Administrator/.qoder-cn`;
+  `configDir: ~/.qoder-cn`;
 - Qoder MCP `harness-enhance` 环境变量 -> `MY_HARNESS_ENHANCE_GLOBAL=1`（不绑定固定
   项目）；
 - 全局安装 8 个 hooks；settings 备份
   `settings.json.harness-enhance-20261018103042.bak`；
-- `doctor --root D:/project/github/blog`（一个未注册的 workspace）-> ok，
+- `doctor --root <workspace>`（一个未注册的 workspace）-> ok，
   显示全局模式与 "auto on first session"；
 - 自动注册只作用于**新**的 SessionStart（`startup`/`new`/`clear`）。
   在未注册 workspace 上只触发 PreToolUse 的测试保持静默（已补测试）。
@@ -110,9 +110,9 @@ node bin/mhe.mjs install qoder --global
   `MY_HARNESS_ENHANCE_PROJECT`，再次是 MCP 进程的 cwd；全局
   `active.json` 不再作为兜底。Capsule 里包含 `PROJECT`。
 - Qoder 在 18:33:37 重启；新的 MCP server 进程在 18:33:44 启动
-  （PID 19708），跑的是全局代码。
+  （独立进程），跑的是全局代码。
 - 首个全局 workspace 会话 `aebbad10-e969-468e-bbfc-202aa5d9c5a2`
-  （cwd `D:\project\github`，model `qfmodel`）：自动注册，conductor
+  （cwd `<workspace>`，model `qfmodel`）：自动注册，conductor
   policy/capsule 已创建，随后 conductor 派发给原生 `Explore`。
 - 首个 Explore 结果被拒绝，因为 evidence 条目是文件路径
   （旧的严格 handle 校验）。已修复：evidence 接受路径/URL；只有 artifacts
@@ -129,7 +129,7 @@ node bin/mhe.mjs install qoder --global
 ## 4. 安装后 hook 模拟（原生 agent）
 
 使用 `settings.json` 里原样的命令，`cwd` 指向本项目，并且
-`model=qfmodel`（auto 模式，不做选择）：
+`model=qfmodel`：
 
 - `SessionStart` -> `MY-HARNESS-ENHANCE CONDUCTOR` policy + capsule + WORKERS
   映射。
@@ -153,7 +153,7 @@ node bin/mhe.mjs install qoder --global
 ## 5. 首个真实 Qoder 会话（60c87313）
 
 会话：`60c87313-cdf1-4a4e-a38d-e1ffcdf2d2b9`，cwd
-`D:\project\github\my-harness-enhance`，model `qfmodel`，创建于 18:16:30。
+`<repo>`，model `qfmodel`，创建于 18:16:30。
 
 实际观测：
 
@@ -192,7 +192,7 @@ node bin/mhe.mjs install qoder --global
 ## 6. 写入 + 验证会话（c1f3a1b9）
 
 会话：`c1f3a1b9-406a-435d-98a6-1766e2cd92ae`，cwd
-`D:\project\github\my-harness-enhance`，model `qfmodel`。
+`<repo>`，model `qfmodel`。
 
 实际观测：
 
@@ -259,5 +259,4 @@ node bin/mhe.mjs install qoder --global
 - 当 conductor model 为 qwen 3.5
   9b/7b 时与旧 `bash-delegate` hook 的交互（会打印告警；改用非 9B model 或移除旧 hook）。
 - ZCode adapter 与 macOS/Linux 实机运行。
-- 仓库仍然没有 `.git`；变更历史只能依赖
-  mtime。公开释出前先初始化版本控制。
+- 仓库现在已有 git 历史；2026-10-19 之前的条目早于它。
