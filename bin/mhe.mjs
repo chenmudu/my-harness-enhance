@@ -12,7 +12,7 @@ import { enhanceHome, projectKey } from '../src/core/state-root.mjs';
 import { runDemo } from '../src/bench/demo.mjs';
 import { describeAdapter } from '../src/adapters/spec.mjs';
 import { getAdapter, listAdapters } from '../src/adapters/registry.mjs';
-import { detectConfigDir } from '../src/adapters/qoder/install.mjs';
+import { detectConfigDir, syncCapabilities } from '../src/adapters/qoder/install.mjs';
 
 const VERSION = '0.2.0';
 
@@ -144,6 +144,11 @@ function printInstallReport(report, adapter) {
 function cmdInit(args) {
   const root = rootFrom(args);
   const { stateDir } = ensureState(root, { harness: 'qoder' });
+  try {
+    syncCapabilities({ root });
+  } catch {
+    // init must stay usable when the harness config dir is absent
+  }
   const { config } = loadConfig(root);
   process.stdout.write(
     `initialized ${root}\n` +
@@ -288,8 +293,19 @@ function cmdToggle(args, enabled) {
   const root = rootFrom(args);
   ensureState(root, { enabled });
   saveConfig(root, { enabled });
-  if (enabled) enableProject(root);
-  else disableProject(root);
+  if (enabled) {
+    enableProject(root);
+    const { config } = loadConfig(root);
+    if (!config.capabilities?.allowedSubagents?.length) {
+      try {
+        syncCapabilities({ root });
+      } catch {
+        // enable must stay usable when the harness config dir is absent
+      }
+    }
+  } else {
+    disableProject(root);
+  }
   process.stdout.write(
     `my-harness-enhance ${enabled ? 'enabled' : 'disabled'} for ${root}\n` +
     (enabled ? '' : 'Hooks will be a no-op until you run `mhe enable`.\n'),

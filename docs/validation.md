@@ -13,6 +13,8 @@ node --test
 
 Result: **202 tests, 202 pass, 0 fail**.
 
+> 2026-10-24 复核：新增 8 条回归（canonicalPath、能力同步、capsule、envelope、Unicode），Windows 210/210；macOS 基线未复跑。同日 demo 输出为 715 envelope tokens / 389 capsule tokens（上方 2026-10-18 数字保留为历史记录）。
+
 Coverage includes:
 
 - contract parse/validate/compact, invalid-result replacement, and explicit

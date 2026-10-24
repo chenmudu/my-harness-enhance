@@ -262,7 +262,7 @@ ZCode 特定契约：
 ## 6. 验证
 
 ```bash
-node --test                 # 202 tests
+node --test                 # 210 tests
 node bin/mhe.mjs bench      # main-context simulation
 node bin/mhe.mjs demo       # state/contract/artifact demo
 node bin/mhe.mjs doctor --root "<project>"

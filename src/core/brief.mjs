@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { clipText } from './text.mjs';
 
 export const PROFILES = ['general', 'docs', 'code', 'research', 'ops'];
 
@@ -185,7 +186,7 @@ export function briefForInjection(brief, maxChars = 1400) {
     brief.notes ? `NOTES: ${brief.notes}` : '',
   ].filter(Boolean).join('\n');
   if (lines.length <= maxChars) return lines;
-  return `${lines.slice(0, Math.max(0, maxChars - 20))}\n…[brief truncated]`;
+  return clipText(lines, maxChars - 1, '\n…[brief truncated]');
 }
 
 export function briefSummary(brief) {
@@ -210,5 +211,5 @@ export function briefForCapsule(brief, maxChars = 700) {
     brief.ownership?.length ? `ownership=${brief.ownership.join(',')}` : '',
     brief.notes || '',
   ].filter(Boolean).join(' | ');
-  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 20)}…[truncated]`;
+  return text.length <= maxChars ? text : clipText(text, maxChars - 8, '…[truncated]');
 }

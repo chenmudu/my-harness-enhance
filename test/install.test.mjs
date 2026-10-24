@@ -9,10 +9,12 @@ import {
   installQoder,
   mergeHooks,
   mergeMcp,
+  refreshCapabilities,
+  syncCapabilities,
   uninstallQoder,
 } from '../src/adapters/qoder/install.mjs';
 import { capabilitiesPath, loadConfig, stateDirFor } from '../src/core/config.mjs';
-import { enhanceHome, readRegistry } from '../src/core/state-root.mjs';
+import { canonicalPath, enhanceHome, readRegistry } from '../src/core/state-root.mjs';
 import { readGlobalConfig } from '../src/core/global.mjs';
 
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
@@ -92,12 +94,16 @@ test('mergeMcp preserves existing servers, drops the legacy name, and adds ours'
       'harness-router': { command: 'legacy' },
     },
   };
-  mergeMcp(settings, { root: 'C:\\project', serverName: 'harness-enhance' });
+  const projectRoot = path.join(os.tmpdir(), 'mhe-mcp-project');
+  mergeMcp(settings, { root: projectRoot, serverName: 'harness-enhance' });
   assert.ok(settings.mcpServers.Existing);
   assert.equal(settings.mcpServers['harness-router'], undefined);
   assert.equal(settings.mcpServers['harness-enhance'].type, 'stdio');
   assert.ok(settings.mcpServers['harness-enhance'].args[0].endsWith('recall-server.mjs'));
-  assert.equal(settings.mcpServers['harness-enhance'].env.MY_HARNESS_ENHANCE_PROJECT, 'C:\\project');
+  assert.equal(
+    settings.mcpServers['harness-enhance'].env.MY_HARNESS_ENHANCE_PROJECT,
+    canonicalPath(projectRoot),
+  );
 });
 
 test('dry-run reports native reuse without writing settings, agents, or state', () => {
@@ -247,4 +253,27 @@ test('uninstall removes our hooks, MCP, and agents but keeps official/user agent
     Object.values(readRegistry().projects).some((project) => project.projectRoot === root),
     false,
   );
+});
+
+test('syncCapabilities resolves builtins without installing agents', () => {
+  const root = tmp('sync-root');
+  const configDir = tmp('sync-qoder');
+  const report = syncCapabilities({ root, configDir });
+  assert.ok(report.capabilities.allowedSubagents.includes('general-purpose'));
+  assert.ok(report.capabilities.allowedSubagents.includes('Explore'));
+  assert.equal(report.capabilities.roles.reason.unresolved, true);
+  const { config } = loadConfig(root);
+  assert.deepEqual(
+    [...config.capabilities.allowedSubagents].sort(),
+    [...report.capabilities.allowedSubagents].sort(),
+  );
+  assert.equal(fs.existsSync(path.join(configDir, 'agents', 'mhe-reasoner.md')), false);
+});
+
+test('refreshCapabilities installs the fallback it declares', () => {
+  const root = tmp('refresh-root');
+  const configDir = tmp('refresh-qoder');
+  const report = refreshCapabilities({ root, configDir });
+  assert.ok(report.capabilities.fallbacksToInstall.includes('mhe-reasoner'));
+  assert.equal(fs.existsSync(path.join(configDir, 'agents', 'mhe-reasoner.md')), true);
 });

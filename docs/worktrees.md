@@ -1,5 +1,7 @@
 # Worktrees for the code profile
 
+> Chinese version: [worktrees.zh-CN.md](worktrees.zh-CN.md).
+
 The `code` profile works best when each task edits in isolation instead of
 sharing one checkout. This layer adds git-only worktrees under the user-level
 state home, dependency gates at both worktree creation and worker dispatch,

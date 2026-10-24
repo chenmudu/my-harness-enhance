@@ -297,10 +297,11 @@ export function appendDecision(root, decision, rationale = '') {
     decision: text.slice(0, 600),
     rationale: String(rationale || '').slice(0, 1000),
   };
-  const file = storePaths(root).decisions;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
-  return entry;
+  return withLock(root, () => {
+    const file = storePaths(root).decisions;
+    fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
+    return entry;
+  });
 }
 
 export function readDecisions(root, limit = 10) {

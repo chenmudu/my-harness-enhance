@@ -1,5 +1,7 @@
 # Harness adapter contract
 
+> Chinese version: [adapters.zh-CN.md](adapters.zh-CN.md).
+
 This repository is a harness-agnostic enhancement layer. The adapter
 boundary is the contract that makes that claim true at the code level, not
 just in the README. **Qoder is the first adapter implementation, ZCode the

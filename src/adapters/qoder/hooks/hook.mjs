@@ -7,7 +7,7 @@ import {
   readGlobalConfig,
   writeActiveProject,
 } from '../../../core/global.mjs';
-import { detectConfigDir } from '../install.mjs';
+import { detectConfigDir, syncCapabilities } from '../install.mjs';
 import { conductorInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
 import {
   compactEnvelope,
@@ -619,10 +619,22 @@ async function main() {
   }
   writeActiveProject(project.projectRoot, payload.session_id || payload.sessionId || '');
   const root = project.projectRoot;
-  const { config } = loadConfig(root);
+  let { config } = loadConfig(root);
   if (!config.enabled) {
     process.exitCode = 0;
     return;
+  }
+  if (EVENT === 'SessionStart' && !(config.capabilities?.allowedSubagents || []).length) {
+    try {
+      syncCapabilities({
+        root,
+        configDir: config.qoder?.configDir || null,
+        allowFallbacks: false,
+      });
+      config = loadConfig(root).config;
+    } catch {
+      // never let capability repair break the hook
+    }
   }
 
   try {

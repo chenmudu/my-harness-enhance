@@ -38,6 +38,11 @@ context limit, tool set, latency, reliability. The conductor picks the cheapest
 worker that meets the task's capability bar. Do not hardcode "model A always
 does X".
 
+Status (v0.2): this is a policy target, not a runtime router.
+`src/core/capabilities.mjs` hardcodes a static role -> candidate list, and the
+only model field is the `model: qfmodel` line in the fallback agent templates;
+cost/capability routing and per-task budgets are v0.3 work (see `roadmap.md`).
+
 Free workers have risks: rate limits, weaker tool reliability, context limits,
 and hidden policy filters. The layer must have fallback (paid/local worker) and
 result validation. Final judgment never belongs to a free worker.
@@ -103,7 +108,8 @@ Rules:
 - Global auto mode: install once per machine; the first **new** session in any
   workspace auto-registers it (SessionStart startup/new/clear). Already-running
   sessions are not retrofitted. Every main session in a registered workspace is
-  the conductor; no agent/model selection.
+  the conductor; no per-session agent/model selection (worker roles resolve
+  through the static candidate list in §2.1).
 - Project-scoped auto mode: install a single project explicitly; it registers
   immediately. Useful for strict control or per-project fallback agents.
 - Hooks inject the policy and deny non-conductor tools. The native main agent

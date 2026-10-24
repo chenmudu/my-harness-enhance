@@ -38,8 +38,8 @@ Change the numbers if your task profile differs.
 `node bin/mhe.mjs demo` exercises the real state/contract/artifact path:
 
 - 3 plan tasks, 4 envelopes, verifier checks 3 (2 pass);
-- worker envelopes: ~665 estimated tokens;
-- capsule: ~295 estimated tokens;
+- worker envelopes: ~715 estimated tokens;
+- capsule: ~389 estimated tokens;
 - simulated baseline 54,767 -> conductor 7,457 (86.4% reduction).
 
 The demo does **not** call a model; it proves the plumbing, not model quality.

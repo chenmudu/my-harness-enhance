@@ -364,11 +364,18 @@ export function installQoder({
   };
 }
 
-export function refreshCapabilities({ root = process.cwd(), configDir = null } = {}) {
+export function syncCapabilities({
+  root = process.cwd(),
+  configDir = null,
+  allowFallbacks = false,
+} = {}) {
   const projectRoot = canonicalPath(root);
   const targetDir = detectConfigDir(configDir);
   const detection = detectAvailableAgents({ configDir: targetDir });
-  const capabilities = resolveCapabilities({ availableAgents: detection.available });
+  const capabilities = resolveCapabilities({
+    availableAgents: detection.available,
+    allowFallbacks,
+  });
   const previous = loadConfig(projectRoot).config;
   ensureState(projectRoot, {
     harness: 'qoder',
@@ -379,11 +386,8 @@ export function refreshCapabilities({ root = process.cwd(), configDir = null } =
     logging: previous.logging || 'errors',
     capabilities,
   });
-  atomicWrite(
-    capabilitiesPath(projectRoot),
-    `${JSON.stringify(capabilities, null, 2)}
-`,
-  );
+  atomicWrite(capabilitiesPath(projectRoot), `${JSON.stringify(capabilities, null, 2)}
+`);
   saveConfig(projectRoot, { capabilities });
   return {
     projectRoot,
@@ -392,6 +396,17 @@ export function refreshCapabilities({ root = process.cwd(), configDir = null } =
     capabilities,
     detection,
   };
+}
+
+export function refreshCapabilities({ root = process.cwd(), configDir = null } = {}) {
+  const report = syncCapabilities({ root, configDir, allowFallbacks: true });
+  const { reports, warnings } = copyFallbackAgents(
+    report.configDir,
+    report.capabilities.fallbacksToInstall,
+    false,
+    false,
+  );
+  return { ...report, fallbackReports: reports, warnings };
 }
 
 export function uninstallQoder({
@@ -532,8 +547,8 @@ export function doctorQoder({ root = process.cwd(), configDir = null, platform =
   checks.push({
     name: 'capability roles',
     ok: (Object.keys(roles).length > 0 && unresolved.length === 0) || globalMode,
-    detail: Object.keys(roles).length === 0 && globalMode
-      ? '(resolved on first workspace session)'
+    detail: Object.keys(roles).length === 0
+      ? (globalMode ? '(resolved on first workspace session)' : 'no capabilities resolved; run `mhe refresh`')
       : (unresolved.length ? `unresolved: ${unresolved.join(', ')}` : summarizeWorkers(config.capabilities)),
   });
   checks.push({

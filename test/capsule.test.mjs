@@ -5,7 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
 import { buildCapsule, conductorInjection, workerContract } from '../src/core/capsule.mjs';
-import { initStore, writeGoal } from '../src/core/store.mjs';
+import { estimateTokens } from '../src/core/metrics.mjs';
+import {
+  appendDecision,
+  initStore,
+  writeGoal,
+  writeLastCheck,
+  writePlan,
+} from '../src/core/store.mjs';
 
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-capsule-home-'),
@@ -65,4 +72,24 @@ test('worker contract is leaf-only and has no fake depth knobs', () => {
   assert.match(contract, /Do not read or write assistant memory/);
   assert.doesNotMatch(contract, /maxDepth|maxFanout/);
   assert.doesNotMatch(contract, /depth: \d+ \/ max/);
+});
+
+test('capsule keeps NEXT and LAST CHECK when the state is over budget', () => {
+  const root = makeRoot();
+  const filler = '处理模块的实现与验证并补齐缺失的测试保证与既有接口兼容';
+  writePlan(
+    root,
+    Array.from({ length: 30 }, (_, i) => ({
+      id: `t${i + 1}`,
+      title: `task ${i + 1} ${filler}`,
+      status: i < 29 ? 'completed' : 'pending',
+    })),
+    { replace: true },
+  );
+  writeLastCheck(root, { ok: true, checked: ['docs'], summary: { blockers: 0, warnings: 1 } });
+  for (let i = 0; i < 12; i += 1) appendDecision(root, `decision ${i} ${filler}`, 'r'.repeat(100));
+  const capsule = buildCapsule(root, { maxTokens: 300 });
+  assert.match(capsule, /## NEXT/);
+  assert.match(capsule, /## LAST CHECK/);
+  assert.ok(estimateTokens(capsule) <= 300, `tokens ${estimateTokens(capsule)}`);
 });

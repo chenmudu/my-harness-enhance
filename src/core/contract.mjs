@@ -1,4 +1,5 @@
 import { DEFAULT_CONFIG } from './config.mjs';
+import { clipText } from './text.mjs';
 
 export const ENVELOPE_VERSION = 1;
 
@@ -18,7 +19,7 @@ const HANDLE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,127}$/;
 function clip(value, max) {
   if (typeof value !== 'string') return '';
   if (value.length <= max) return value;
-  return `${value.slice(0, Math.max(0, max - 20))}…[truncated]`;
+  return clipText(value, max - 8, '…[truncated]');
 }
 
 function asString(value) {
@@ -324,13 +325,23 @@ export function validateEnvelope(value, limits = DEFAULT_CONFIG.envelope) {
   return { ok: true, errors: [], warnings, value: normalized };
 }
 
+function looksLikeTemplate(value) {
+  if (!value || typeof value !== 'object') return false;
+  const status = typeof value.status === 'string' ? value.status.trim() : '';
+  if (status.includes('|')) return true;
+  const summary = String(value.summary || '').trim();
+  if (/^<=?\s*\d+\s*chars?/i.test(summary)) return true;
+  if (/^factual,\s*no transcript/i.test(summary)) return true;
+  return false;
+}
+
 export function parseEnvelope(input, limits = DEFAULT_CONFIG.envelope) {
   if (input == null) {
     return { ok: false, errors: ['empty worker result'], value: null, raw: '' };
   }
 
   if (typeof input === 'object' && !Array.isArray(input)) {
-    if (input.status && input.summary) {
+    if (input.status && input.summary && !looksLikeTemplate(input)) {
       const result = validateEnvelope(input, limits);
       return { ...result, raw: JSON.stringify(input) };
     }
@@ -347,6 +358,7 @@ export function parseEnvelope(input, limits = DEFAULT_CONFIG.envelope) {
     const candidate = candidates[i];
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
     if (!('status' in candidate) || !('summary' in candidate)) continue;
+    if (looksLikeTemplate(candidate)) continue;
     const result = validateEnvelope(candidate, limits);
     if (result.ok) return { ...result, raw };
     lastError = result.errors;
@@ -395,11 +407,28 @@ export function compactEnvelope(envelope, maxChars = DEFAULT_CONFIG.envelope.max
   text = JSON.stringify(out);
   if (text.length <= maxChars) return text;
 
+  const fullEvidence = out.evidence;
+  const fullArtifacts = out.artifacts;
+  const fullQuestions = out.open_questions;
+  const fullNeedsSplit = out.needs_split;
   out.evidence = [];
   out.artifacts = [];
   out.open_questions = [];
   out.needs_split = null;
   out.next = clip(out.next, 200);
+  const refill = (key, items) => {
+    for (const item of items) {
+      const candidate = { ...out, [key]: [...out[key], item] };
+      if (JSON.stringify(candidate).length <= maxChars) out[key] = candidate[key];
+    }
+  };
+  refill('evidence', fullEvidence);
+  refill('artifacts', fullArtifacts);
+  refill('open_questions', fullQuestions);
+  if (fullNeedsSplit) {
+    const candidate = { ...out, needs_split: fullNeedsSplit };
+    if (JSON.stringify(candidate).length <= maxChars) out.needs_split = fullNeedsSplit;
+  }
   text = JSON.stringify(out);
   return text.length <= maxChars ? text : text.slice(0, maxChars);
 }

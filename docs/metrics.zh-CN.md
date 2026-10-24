@@ -38,8 +38,8 @@ state 3KB，每一步的工具输出与推理取值见 `src/core/metrics.mjs`。
 `node bin/mhe.mjs demo` 走的是真实的 state/contract/artifact 路径：
 
 - 3 个 plan 任务、4 个 envelope、3 项校验器（verifier）检查（2 项通过）；
-- worker envelope：估算 ~665 tokens；
-- capsule：估算 ~295 tokens；
+- worker envelope：估算 ~715 tokens；
+- capsule：估算 ~389 tokens；
 - 模拟 baseline 54,767 -> conductor 7,457（缩减 86.4%）。
 
 该 demo **不会**调用模型；它证明的是管线接通，不是模型质量。

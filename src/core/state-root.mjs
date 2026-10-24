@@ -20,13 +20,22 @@ export function registryPath() {
 }
 
 export function canonicalPath(value) {
-  let resolved = path.resolve(value);
-  try {
-    resolved = fs.realpathSync.native(resolved);
-  } catch {
-    // path may not exist yet; use the resolved form
+  const absolute = path.resolve(value);
+  let head = absolute;
+  const tail = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(head);
+      return tail.length ? path.join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return absolute;
+      // Resolve the nearest existing ancestor so an existing parent and a
+      // not-yet-created child agree on the same prefix.
+      tail.push(path.basename(head));
+      head = parent;
+    }
   }
-  return resolved;
 }
 
 export function compareKey(value) {

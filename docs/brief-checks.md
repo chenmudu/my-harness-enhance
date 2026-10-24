@@ -1,5 +1,7 @@
 # Brief and deterministic checks
 
+> Chinese version: [brief-checks.zh-CN.md](brief-checks.zh-CN.md).
+
 The conductor should create a shared **brief** before fan-out, and run
 **deterministic checks** before accepting the result. This replaces the
 expensive pattern:

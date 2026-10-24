@@ -142,7 +142,12 @@ export function conductorDenyReason(tool, config) {
       'single durable task graph; worker jobs are tracked through enhance_job.';
   }
   if (tool === 'Agent' || tool === 'Task') {
-    return `Conductor may only delegate to: ${(config.capabilities?.allowedSubagents || []).join(', ')}. ` +
+    const allowed = config.capabilities?.allowedSubagents || [];
+    if (allowed.length === 0) {
+      return 'No worker capabilities are resolved for this project. Run `mhe refresh` ' +
+        '(or reinstall) so the available subagents can be detected.';
+    }
+    return `Conductor may only delegate to: ${allowed.join(', ')}. ` +
       'Use a registered worker role from the WORKERS mapping.';
   }
   return 'Conductor must not execute repository work. Delegate to a native worker via Agent, or use the enhance_* state tools. ' +

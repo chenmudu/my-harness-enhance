@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { atomicWrite, loadConfig } from './config.mjs';
 import { estimateTokens } from './metrics.mjs';
+import { clipText, safeEnd } from './text.mjs';
 import { briefForCapsule, briefForInjection } from './brief.mjs';
 import {
   readBrief,
@@ -68,7 +69,7 @@ const ENVELOPE_SCHEMA = `{
 function clip(text, maxChars) {
   const value = String(text ?? '');
   if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 18))}…[truncated]`;
+  return clipText(value, maxChars - 6, '…[truncated]');
 }
 
 export function fitToTokens(text, maxTokens) {
@@ -81,7 +82,7 @@ export function fitToTokens(text, maxTokens) {
     if (estimateTokens(text.slice(0, mid)) <= maxTokens) low = mid;
     else high = mid - 1;
   }
-  return `${text.slice(0, low)}\n…[capsule truncated]`;
+  return `${text.slice(0, safeEnd(text, low))}\n…[capsule truncated]`;
 }
 
 function section(title, body) {
@@ -137,31 +138,68 @@ export function buildCapsule(root, { maxTokens = null } = {}) {
     || plan.tasks?.find((task) => task.status === 'pending')
     || activeJobs[0];
 
-  const core = [
-    section('PROJECT', `${root} (pass this exact path as project to every enhance_* call; GOAL paths are not workspace overrides)`),
-    section('GOAL', clip(goal.text, 1200)),
-    section('ACCEPTANCE', goal.acceptance?.map((item) => `- ${item}`).join('\n')),
-    section('CONSTRAINTS', goal.constraints?.map((item) => `- ${item}`).join('\n')),
-    section('BRIEF', briefForCapsule(brief)),
-    section('PLAN', planLines),
-    section('ACTIVE JOBS', jobLines),
-    section('WORKTREES', worktreeLines),
-    section('WORKERS', workerMenu(config.capabilities)),
-    section('NEXT', next ? clip(next.title || next.task || next.id, 400) : ''),
-  ].join('\n');
-
   const checkLine = lastCheck
     ? `${lastCheck.ok ? 'ok' : 'FAIL'} checked=${(lastCheck.checked || []).join(',') || '(none)'} blockers=${lastCheck.summary?.blockers ?? '?'} warnings=${lastCheck.summary?.warnings ?? '?'}${lastCheck.worktree ? ` worktree=${lastCheck.worktree}` : ''}${pendingLand ? ' LAND REQUIRED' : ''}`
     : '';
-  const optional = [
-    section('RECENT DECISIONS', decisionLines),
-    section('LAST CHECK', checkLine),
-    section('ARTIFACTS', artifactLines),
-  ].join('\n');
 
-  let text = `[MY-HARNESS-ENHANCE CAPSULE v1]\n\n${core}\n${optional}`;
-  if (estimateTokens(text) > budget) {
-    text = `[MY-HARNESS-ENHANCE CAPSULE v1]\n\n${core}`;
+  const entries = [
+    {
+      title: 'PROJECT',
+      body: `${root} (pass this exact path as project to every enhance_* call; GOAL paths are not workspace overrides)`,
+      pinned: true,
+    },
+    {
+      title: 'NEXT',
+      body: next ? clip(next.title || next.task || next.id, 400) : '',
+      pinned: true,
+    },
+    { title: 'LAST CHECK', body: checkLine, pinned: true },
+    { title: 'GOAL', body: clip(goal.text, 1200), priority: 1 },
+    { title: 'ACCEPTANCE', body: goal.acceptance?.map((item) => `- ${item}`).join('\n'), priority: 2 },
+    { title: 'CONSTRAINTS', body: goal.constraints?.map((item) => `- ${item}`).join('\n'), priority: 3 },
+    { title: 'WORKERS', body: workerMenu(config.capabilities), priority: 4 },
+    { title: 'BRIEF', body: briefForCapsule(brief), priority: 5 },
+    { title: 'PLAN', body: planLines, priority: 6 },
+    { title: 'ACTIVE JOBS', body: jobLines, priority: 7 },
+    { title: 'WORKTREES', body: worktreeLines, priority: 8 },
+    { title: 'RECENT DECISIONS', body: decisionLines, priority: 9 },
+    { title: 'ARTIFACTS', body: artifactLines, priority: 10 },
+  ].filter((entry) => entry.body && String(entry.body).trim());
+
+  // Pinned sections are the conductor's minimum working set. Everything else
+  // is added by priority while it fits; omissions are named rather than silent.
+  let text = '[MY-HARNESS-ENHANCE CAPSULE v1]\n\n';
+  const add = (entry) => `${section(entry.title, entry.body)}\n`;
+  for (const entry of entries.filter((entry) => entry.pinned)) text += add(entry);
+  const omitted = [];
+  for (const entry of entries
+    .filter((entry) => !entry.pinned)
+    .sort((a, b) => a.priority - b.priority)) {
+    if (estimateTokens(`${text}${add(entry)}`) <= budget) {
+      text += add(entry);
+      continue;
+    }
+    if (entry.title === 'PLAN') {
+      const lines = String(entry.body).split('\n');
+      let low = 0;
+      let high = lines.length;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        const body = `${lines.slice(0, mid).join('\n')}\n- … (${lines.length - mid} more tasks omitted)`;
+        if (estimateTokens(`${text}${add({ title: entry.title, body })}`) <= budget) low = mid;
+        else high = mid - 1;
+      }
+      if (low > 0) {
+        const body = `${lines.slice(0, low).join('\n')}\n- … (${lines.length - low} more tasks omitted)`;
+        text += add({ title: entry.title, body });
+        continue;
+      }
+    }
+    omitted.push(entry.title);
+  }
+  if (omitted.length > 0) {
+    const note = add({ title: 'OMITTED', body: omitted.join(', ') });
+    if (estimateTokens(`${text}${note}`) <= budget) text += note;
   }
   return fitToTokens(text, budget);
 }

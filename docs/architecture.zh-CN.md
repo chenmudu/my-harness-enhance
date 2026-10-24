@@ -38,6 +38,11 @@ context 上限、工具集、延迟、可靠性。conductor 选择最便宜的�
 能满足该任务能力门槛的 worker。
 不要把“模型 A 永远做 X”这类规则写死。
 
+状态（v0.2）：这是策略目标，不是运行时路由器。
+`src/core/capabilities.mjs` 只硬编码了一张静态的 role -> 候选 agent 表；
+唯一的模型字段是 fallback agent 模板里的 `model: qfmodel`。
+成本/能力路由与每任务预算属于 v0.3（见 `roadmap.md`）。
+
 免费 worker 有风险：限流（rate limit）、工具可靠性更弱、context 上限，
 以及隐藏的策略过滤。这一层必须有 fallback（付费/本地 worker）和结果校验。
 最终裁决权永远不属于免费 worker。
@@ -103,7 +108,8 @@ worker 返回 `needs_split`，并附上建议的子图，由 conductor
 - 全局 auto 模式：每台机器安装一次；任意 workspace 中**第一个新**
   会话会被自动注册（SessionStart startup/new/clear）。已经在跑的
   会话不会被 retrofit。已注册 workspace 里的每个主会话
-  都是 conductor；不需要选择 agent/model。
+  都是 conductor；不按会话选择 agent/model
+  （worker 角色由 §2.1 的静态候选表解析）。
 - 项目级（project-scoped）auto 模式：显式安装单个项目；它会立刻注册。适合严格管控
   或者按项目设置 fallback agent。
 - Hooks 注入策略并 deny 掉非 conductor 的工具。
