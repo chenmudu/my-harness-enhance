@@ -55,7 +55,7 @@ function pairFor(english) {
 }
 
 function englishPages() {
-  const pages = ['README.md', 'INSTALL.md'];
+  const pages = ['README.md', 'INSTALL.md', 'overlays/README.md'];
   for (const name of fs.readdirSync(path.join(root, 'docs'))) {
     if (name.endsWith('.md') && !name.endsWith('.zh-CN.md')) {
       pages.push(`docs/${name}`);
@@ -66,7 +66,7 @@ function englishPages() {
 
 const pairs = englishPages().map((english) => ({ english, chinese: pairFor(english) }));
 
-test('every repository page except overlays has a Chinese twin', () => {
+test('every repository page has a Chinese twin', () => {
   for (const { english, chinese } of pairs) {
     assert.ok(fs.existsSync(path.join(root, chinese)), `${english} is missing ${chinese}`);
   }
@@ -109,10 +109,7 @@ test('table row and column counts match in every pair', () => {
 });
 
 test('every relative link resolves', () => {
-  const files = [
-    'overlays/README.md',
-    ...pairs.flatMap(({ english, chinese }) => [english, chinese]),
-  ];
+  const files = pairs.flatMap(({ english, chinese }) => [english, chinese]);
   for (const file of files) {
     for (const target of relativeLinks(read(file))) {
       const resolved = path.resolve(path.dirname(path.join(root, file)), target);

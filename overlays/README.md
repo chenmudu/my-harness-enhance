@@ -1,5 +1,7 @@
 # Personal overlays
 
+> Chinese version: [README.zh-CN.md](README.zh-CN.md).
+
 This directory holds the personal defaults for your own harness. They live in
 this repo so they are versionable, and they install into your user-level Qoder
 config directory. They never write into a target workspace or project repo.
