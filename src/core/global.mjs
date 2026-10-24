@@ -7,10 +7,6 @@ export function globalConfigPath() {
   return path.join(enhanceHome(), 'global.json');
 }
 
-export function activeProjectPath() {
-  return path.join(enhanceHome(), 'active.json');
-}
-
 export function readGlobalConfig() {
   return readJson(globalConfigPath(), {
     version: 1,
@@ -27,20 +23,6 @@ export function writeGlobalConfig(patch = {}) {
   const next = { ...current, ...patch, version: 1, updatedAt: new Date().toISOString() };
   atomicWrite(globalConfigPath(), `${JSON.stringify(next, null, 2)}\n`);
   return next;
-}
-
-export function readActiveProject() {
-  return readJson(activeProjectPath(), { projectRoot: '', sessionId: '', at: null });
-}
-
-export function writeActiveProject(projectRoot, sessionId = '') {
-  const entry = {
-    projectRoot: canonicalPath(projectRoot),
-    sessionId: String(sessionId || ''),
-    at: new Date().toISOString(),
-  };
-  atomicWrite(activeProjectPath(), `${JSON.stringify(entry, null, 2)}\n`);
-  return entry;
 }
 
 function isUnder(target, base) {

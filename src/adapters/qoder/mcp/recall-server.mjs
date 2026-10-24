@@ -34,6 +34,8 @@ const PROJECT_PROP = {
   description: 'Workspace root or any path inside it. Use the PROJECT value from the capsule.',
 };
 
+const SERVER_STARTED_AT = new Date().toISOString();
+
 function textResult(text, isError = false) {
   return {
     content: [{ type: 'text', text: String(text ?? '') }],
@@ -527,7 +529,16 @@ function toolEnhanceArtifact(args = {}) {
 
 function toolEnhanceCapabilities(args = {}) {
   const { config } = contextFor(args);
-  return jsonResult(config.capabilities || {});
+  return jsonResult({
+    ...(config.capabilities || {}),
+    server: {
+      pid: process.pid,
+      ppid: process.ppid,
+      started_at: SERVER_STARTED_AT,
+      global: process.env.MY_HARNESS_ENHANCE_GLOBAL === '1',
+      project_env: process.env.MY_HARNESS_ENHANCE_PROJECT || '',
+    },
+  });
 }
 
 function toolEnhanceWorkerContract(args = {}) {

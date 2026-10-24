@@ -16,6 +16,10 @@ adapter 级别的细节。
 状态是用户级的：`~/.my-harness-enhance/projects/<hash>/`。项目仓库
 里没有 `.router`。
 
+`enhance_capabilities` 还会返回 `server` 块（`pid`、`ppid`、
+`started_at`、`global`、`project_env`），
+用来判断两个会话是否共享同一个 MCP 进程。
+
 ## 安装
 
 全局模式（推荐；每台机器安装一次）：

@@ -16,6 +16,10 @@ adapter-level detail.
 State is user-level: `~/.my-harness-enhance/projects/<hash>/`. No `.router` in the
 project repository.
 
+`enhance_capabilities` also returns a `server` block (`pid`, `ppid`,
+`started_at`, `global`, `project_env`) so two sessions can tell whether they
+share one MCP process.
+
 ## Install
 
 Global mode (recommended; one install per machine):

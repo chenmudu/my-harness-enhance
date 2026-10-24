@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { initStore, readGoal, readPlan, writeGoal } from '../src/core/store.mjs';
 import { putArtifact } from '../src/core/artifacts.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
-import { writeActiveProject } from '../src/core/global.mjs';
 
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-mcp-home-'),
@@ -173,10 +172,28 @@ test('MCP enhance_plan accepts id-only tasks and falls back to id as title', () 
   assert.equal(plan.tasks[0].title, 't-only');
 });
 
-test('MCP resolves project from cwd, not another workspace active.json', () => {
+test('MCP capabilities include process diagnostics', () => {
+  const root = makeRoot();
+  const responses = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'enhance_capabilities', arguments: {} },
+    },
+  ]);
+  const capabilities = JSON.parse(responses.find((item) => item.id === 2).result.content[0].text);
+  assert.ok(capabilities.server.pid > 0);
+  assert.ok(capabilities.server.ppid > 0);
+  assert.match(capabilities.server.started_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(capabilities.server.global, false);
+  assert.equal(capabilities.server.project_env, root);
+});
+
+test('MCP resolves project from cwd, not a sibling workspace', () => {
   const root1 = makeRoot();
   const root2 = makeRoot();
-  writeActiveProject(root2);
   const responses = runRpc(root1, [
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
     {

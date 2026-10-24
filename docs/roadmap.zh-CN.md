@@ -13,7 +13,7 @@
 - 全局模式：每台机器安装一次；任意 workspace 的新会话
   自动注册；MCP 工具按 `project`/env/cwd 路由；已有会话不会被
   retrofit。
-- 221 个测试；demo；基准测试；带 1 个 fallback agent 的 Qoder 安装；Qoder 只读、
+- 222 个测试；demo；基准测试；带 1 个 fallback agent 的 Qoder 安装；Qoder 只读、
   写+验证会话；已安装环境的 hook 模拟。
 - 一个 conductor + 原生 worker；worker 都是叶子节点（禁止 Agent/Task），所以
   不存在静默的嵌套扇出。

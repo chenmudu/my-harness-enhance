@@ -5,7 +5,6 @@ import { detectAvailableAgents, resolveCapabilities } from '../../../core/capabi
 import {
   isExcludedProject,
   readGlobalConfig,
-  writeActiveProject,
 } from '../../../core/global.mjs';
 import { detectConfigDir, syncCapabilities } from '../install.mjs';
 import { conductorInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
@@ -739,7 +738,6 @@ async function main() {
     process.exitCode = 0;
     return;
   }
-  writeActiveProject(project.projectRoot, payload.session_id || payload.sessionId || '');
   const root = project.projectRoot;
   let { config } = loadConfig(root);
   if (!config.enabled) {
