@@ -30,7 +30,7 @@ It is not a harness replacement or a multi-agent framework. It adds a control pl
 
 ## Status
 
-- **210/210 tests pass (Windows)**.
+- **221/221 tests pass (Windows)**.
 - Qoder validated end-to-end for read-only, write, and verification sessions.
 - ZCode adapter implemented in project and global modes; `reason` uses read-only Explore compatibility, worker contract is mandatory, and synthetic jobs stand in for SubagentStop. Raw result rewrite/SubagentStop/PreCompact are still native absences.
 - Still to validate: real wall-clock comparison against a single long session, concurrent code integration conflicts, long-running compaction, and Codex/DSH adapters.

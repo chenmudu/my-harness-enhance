@@ -210,6 +210,25 @@ goal/plan 原语、会话存储。它们只是*如何实现*某条不变量而�
 conductor 会话和被映射的原生 worker 创建，
 不会为无关会话创建。
 
+### 3.1 capsule 投影
+
+`capsule.md` 从 state 重建，从不摘录 transcript。预算来自
+`config.context.maxCapsuleTokens`（默认 1800 tokens）。
+
+- **固定段（pinned）：** PROJECT（每次 `enhance_*` 调用传入的精确路径）、
+  NEXT（第一个 in-progress 任务，否则第一个 pending，否则最早的活动 job）、
+  LAST CHECK。
+- **按优先级追加：** GOAL、ACCEPTANCE、CONSTRAINTS、WORKERS、BRIEF、PLAN、
+  ACTIVE JOBS、WORKTREES、RECENT DECISIONS、ARTIFACTS。
+- **有界输入：** PLAN 30 条任务、ACTIVE JOBS 12 条、WORKTREES 10 条、
+  RECENT DECISIONS 8 条、ARTIFACTS 10 条。
+- **降级：** PLAN 在预算内二分截断并写 `(N more tasks omitted)`；跳过的段
+  在 `OMITTED` 里列名；
+  最后的硬上限追加 `…[capsule truncated]`。
+
+固定段先写入，因此即使其余内容放不下，
+conductor 的工作集仍在。
+
 ## 4. Hooks（Qoder adapter）
 
 | 事件 | 角色 |

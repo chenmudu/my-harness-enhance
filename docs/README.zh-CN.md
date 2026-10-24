@@ -30,7 +30,8 @@
 
 ```bash
 npm test
+node --test test/docs.test.mjs
 node --test test/state-root.test.mjs
 ```
 
-链接与双语检查尚未自动化；可加一个小脚本比较标题层级并解析所有相对链接。
+`test/docs.test.mjs` 校验标题层级、逐字围栏、表格形状、回链、相对链接与行数对等（含已记录例外）。

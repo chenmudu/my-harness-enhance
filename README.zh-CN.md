@@ -30,7 +30,7 @@
 
 ## 状态
 
-- **210/210 测试通过（Windows）**。
+- **221/221 测试通过（Windows）**。
 - Qoder 已在只读、写、验证会话上端到端验证。
 - ZCode adapter 已实现项目级和全局模式；`reason` 使用只读 Explore 兼容模式，worker contract 强制内嵌，synthetic job 补偿 SubagentStop。原生仍没有 result rewrite/SubagentStop/PreCompact。
 - 待验证：相对单会话全包的真实 wall-clock 对比、并发代码集成冲突、长周期压缩、Codex/DSH adapter。

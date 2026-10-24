@@ -15,11 +15,12 @@ import {
   invalidResultEnvelope,
   parseEnvelope,
 } from '../../../core/contract.mjs';
-import { byteLength } from '../../../core/metrics.mjs';
+import { byteLength, estimateTokens } from '../../../core/metrics.mjs';
 import { putArtifact } from '../../../core/artifacts.mjs';
 import {
   appendDecision,
   appendJournal,
+  appendMetric,
   findJobByAgent,
   markSession,
   newJobId,
@@ -58,6 +59,14 @@ import {
 } from './lib.mjs';
 
 const EVENT = process.argv[2] || 'Unknown';
+
+function recordMetric(root, event) {
+  try {
+    appendMetric(root, event);
+  } catch {
+    // Metrics must never break a hook.
+  }
+}
 
 const HARNESS_MCP_PREFIXES = ['mcp__harness-enhance__', 'mcp__harness_enhance__'];
 
@@ -267,7 +276,16 @@ async function onSessionStart(payload, root, config) {
     });
   }
   log(root, { event: EVENT, role: 'conductor', model: modelOf(payload) }, config);
-  writeCapsule(root);
+  const capsule = writeCapsule(root);
+  recordMetric(root, {
+    event: 'session_start',
+    role: 'conductor',
+    model: modelOf(payload),
+    source,
+    session_id: sessionId || undefined,
+    capsule_chars: capsule.length,
+    capsule_tokens: estimateTokens(capsule),
+  });
   writeText(conductorInjection(root, { contractMode: 'injected' }));
 }
 
@@ -295,7 +313,14 @@ async function onUserPromptSubmit(payload, root, config) {
     }
     writeSession(root, { fresh: false });
   }
-  writeCapsule(root);
+  const capsule = writeCapsule(root);
+  recordMetric(root, {
+    event: 'prompt_submitted',
+    role: 'conductor',
+    prompt_chars: prompt.length,
+    goal_chars: String(readGoal(root).text || '').length,
+    capsule_tokens: estimateTokens(capsule),
+  });
   writeText(conductorInjection(root, { contractMode: 'injected' }));
   log(root, { event: EVENT, role: 'conductor', prompt_chars: prompt.length }, config);
 }
@@ -318,7 +343,16 @@ async function onPreToolUse(payload, root, config) {
       tool,
       allow: decision.allow,
     }, config);
-    if (!decision.allow) denyTool(decision.reason);
+    if (!decision.allow) {
+      recordMetric(root, {
+        event: 'worker_tool_denied',
+        role: 'worker',
+        agent_type: agentType,
+        tool,
+        gate: 'worker',
+      });
+      denyTool(decision.reason);
+    }
     return;
   }
 
@@ -326,6 +360,7 @@ async function onPreToolUse(payload, root, config) {
   const projectReason = projectGateReason(root, harnessProjectArg(tool, toolInput));
   if (projectReason) {
     log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'project' }, config);
+    recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'project' });
     denyTool(projectReason);
     return;
   }
@@ -334,17 +369,24 @@ async function onPreToolUse(payload, root, config) {
     const verificationReason = verificationGateReason(root, toolInput);
     if (verificationReason) {
       log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'verification' }, config);
+      recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'verification' });
       denyTool(verificationReason);
       return;
     }
     const gateReason = dispatchGateReason(root, toolInput);
     if (gateReason) {
       log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'dispatch' }, config);
+      recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'dispatch' });
       denyTool(gateReason);
       return;
     }
   }
   log(root, { event: EVENT, role: 'conductor', tool, allow }, config);
+  if (tool === 'Agent' || tool === 'Task') {
+    recordMetric(root, { event: 'dispatch', role: 'conductor', tool, allow });
+  } else if (!allow) {
+    recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'allowlist' });
+  }
   if (!allow) denyTool(conductorDenyReason(tool, config));
 }
 
@@ -380,6 +422,13 @@ async function onSubagentStart(payload, root, config) {
     job_id: jobId,
     injected: true,
   }, config);
+  recordMetric(root, {
+    event: 'job_start',
+    role: 'worker',
+    agent_type: agentType,
+    job_id: jobId,
+    model: modelOf(payload),
+  });
 }
 
 async function onSubagentStop(payload, root, config) {
@@ -435,6 +484,17 @@ async function onSubagentStop(payload, root, config) {
     status: parsed.ok ? parsed.value.status : 'invalid_result',
     result_handle: artifact.handle,
   }, config);
+  recordMetric(root, {
+    event: 'job_stop',
+    role: 'worker',
+    agent_type: agentType,
+    job_id: jobId,
+    valid: parsed.ok,
+    status: parsed.ok ? parsed.value.status : 'invalid_result',
+    retryable: !parsed.ok,
+    result_chars: raw.length,
+    result_tokens: estimateTokens(raw),
+  });
 }
 
 async function onPostToolUse(payload, root, config) {
@@ -485,6 +545,17 @@ async function onPostToolUse(payload, root, config) {
         status: parsed.value.status,
         artifact: artifact.handle,
       }, config);
+      recordMetric(root, {
+        event: 'agent_result',
+        role: 'conductor',
+        tool,
+        valid: true,
+        status: parsed.value.status,
+        result_chars: raw.length,
+        result_tokens: estimateTokens(raw),
+        compact_chars: compact.length,
+        compact_tokens: estimateTokens(compact),
+      });
     } else {
       const invalid = invalidResultEnvelope(parsed.errors.join('; '), raw);
       invalid.data = {
@@ -492,8 +563,9 @@ async function onPostToolUse(payload, root, config) {
         artifact_handle: artifact.handle,
         artifact_hint: 'Raw result is externalized; read it only if the bounded excerpt is insufficient.',
       };
+      const compactInvalid = JSON.stringify(invalid);
       writeJson(hookJson('PostToolUse', {
-        updatedToolOutput: JSON.stringify(invalid),
+        updatedToolOutput: compactInvalid,
       }));
       log(root, {
         event: EVENT,
@@ -503,6 +575,17 @@ async function onPostToolUse(payload, root, config) {
         artifact: artifact.handle,
         error: parsed.errors.join('; ').slice(0, 300),
       }, config);
+      recordMetric(root, {
+        event: 'agent_result',
+        role: 'conductor',
+        tool,
+        valid: false,
+        status: 'invalid_result',
+        result_chars: raw.length,
+        result_tokens: estimateTokens(raw),
+        compact_chars: compactInvalid.length,
+        compact_tokens: estimateTokens(compactInvalid),
+      });
     }
     return;
   }
@@ -527,6 +610,14 @@ async function onPostToolUse(payload, root, config) {
         artifact: artifact.handle,
         mode: config.context.workerOutputMode,
       }, config);
+      recordMetric(root, {
+        event: 'tool_output_captured',
+        role: 'worker',
+        agent_type: agentType,
+        tool,
+        bytes,
+        mode: config.context.workerOutputMode,
+      });
       if (config.context.workerOutputMode === 'truncate') {
         writeJson(hookJson('PostToolUse', {
           updatedToolOutput:
@@ -545,6 +636,13 @@ async function onPreCompact(payload, root, config) {
   if (!isConductorSession(root, config, payload)) return;
   const capsule = writeCapsule(root);
   log(root, { event: EVENT, trigger: payload.trigger || '', capsule_chars: capsule.length }, config);
+  recordMetric(root, {
+    event: 'compaction',
+    role: 'conductor',
+    trigger: String(payload.trigger || ''),
+    capsule_chars: capsule.length,
+    capsule_tokens: estimateTokens(capsule),
+  });
 }
 
 async function onStop(payload, root, config) {
@@ -554,11 +652,22 @@ async function onStop(payload, root, config) {
   const capsule = writeCapsule(root);
   if (payload.stop_hook_active) {
     log(root, { event: EVENT, role: 'conductor', stop_hook_active: true, capsule_chars: capsule.length }, config);
+    recordMetric(root, {
+      event: 'session_stop',
+      role: 'conductor',
+      stop_hook_active: true,
+      capsule_tokens: estimateTokens(capsule),
+    });
     return;
   }
   const brief = readBrief(root);
   if (String(brief?.profile || '') !== 'code') {
     log(root, { event: EVENT, role: 'conductor', capsule_chars: capsule.length }, config);
+    recordMetric(root, {
+      event: 'session_stop',
+      role: 'conductor',
+      capsule_tokens: estimateTokens(capsule),
+    });
     return;
   }
   const unlanded = [];
@@ -573,9 +682,22 @@ async function onStop(payload, root, config) {
       + 'then remove the landed worktree before reporting completion.';
     writeJson({ decision: 'deny', reason });
     log(root, { event: EVENT, role: 'conductor', blocked: true, unlanded }, config);
+    recordMetric(root, {
+      event: 'session_stop',
+      role: 'conductor',
+      blocked: true,
+      unlanded: unlanded.length,
+      capsule_tokens: estimateTokens(capsule),
+    });
     return;
   }
   log(root, { event: EVENT, role: 'conductor', capsule_chars: capsule.length }, config);
+  recordMetric(root, {
+    event: 'session_stop',
+    role: 'conductor',
+    blocked: false,
+    capsule_tokens: estimateTokens(capsule),
+  });
 }
 
 function autoRegister(payload) {

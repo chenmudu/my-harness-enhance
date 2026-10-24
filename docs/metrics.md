@@ -44,6 +44,41 @@ Change the numbers if your task profile differs.
 
 The demo does **not** call a model; it proves the plumbing, not model quality.
 
+## Hook telemetry (Qoder v0.2)
+
+Hooks append counts and sizes to `metrics.jsonl`; they never record prompts,
+summaries, or raw tool output. Read them with `mhe report` (add `--json` for the
+raw summary):
+
+| Event | Recorded fields |
+|---|---|
+| `session_start` | model, source, session id, capsule chars/tokens |
+| `prompt_submitted` | prompt chars, goal chars, capsule tokens |
+| `dispatch` / `tool_denied` | tool, allow, gate |
+| `job_start` / `job_stop` | agent type, job id, status, valid, retryable, result tokens |
+| `agent_result` | valid, status, raw and compact envelope tokens |
+| `tool_output_captured` | bytes, mode |
+| `compaction` / `session_stop` | trigger, capsule tokens, blocked, unlanded count |
+
+`mhe report` summarizes job counts, invalid rate, envelope sizes, capsule
+tokens, denials, captured bytes, and per-agent counts. It also prints what is
+**not** measured.
+
+### Collected vs not collected
+
+| Quantity | Status | Source |
+|---|---|---|
+| `M_T` (final main context) | simulated only | `bench`, `demo` |
+| `b` (growth per turn) | not collected | needs host context snapshots |
+| `B` (cumulative input) | not collected | needs per-turn context accounting |
+| `C` (billed cost) | not collected | needs provider billing data |
+| Composition | simulated; per-dispatch sizes collected | `bench`, `agent_result` |
+| Envelope / capsule tokens | collected | hook telemetry |
+
+The hook cannot see the full main context, so `agent_result.compact_tokens` is
+the best per-dispatch proxy for what enters it. Do not present the simulated
+`M_T` reduction as a growth-rate measurement.
+
 ## Real-session measurement (Qoder)
 
 Qoder exposes a context-usage panel with categories such as `system_prompt`,

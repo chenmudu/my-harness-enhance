@@ -304,12 +304,41 @@ export function appendDecision(root, decision, rationale = '') {
   });
 }
 
+function readJsonlTail(file, limit) {
+  const take = Math.max(0, Number(limit) || 0);
+  if (take === 0 || !fs.existsSync(file)) return [];
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const chunkSize = 64 * 1024;
+    let position = size;
+    let buffer = Buffer.alloc(0);
+    let newlines = 0;
+    while (position > 0 && newlines <= take) {
+      const readSize = Math.min(chunkSize, position);
+      position -= readSize;
+      const chunk = Buffer.alloc(readSize);
+      const bytesRead = fs.readSync(fd, chunk, 0, readSize, position);
+      buffer = Buffer.concat([chunk.subarray(0, bytesRead), buffer]);
+      newlines = 0;
+      for (const byte of buffer) {
+        if (byte === 0x0a) newlines += 1;
+      }
+    }
+    let text = buffer.toString('utf8');
+    if (position > 0) {
+      const firstBreak = text.indexOf('\n');
+      text = firstBreak === -1 ? '' : text.slice(firstBreak + 1);
+    }
+    return text.split(/\r?\n/).filter(Boolean).slice(-take);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 export function readDecisions(root, limit = 10) {
-  const file = storePaths(root).decisions;
-  if (!fs.existsSync(file)) return [];
-  const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-  return lines
-    .slice(-limit)
+  return readJsonlTail(storePaths(root).decisions, limit)
     .map((line) => {
       try {
         return JSON.parse(line);
@@ -417,13 +446,7 @@ export function appendMetric(root, event) {
 }
 
 export function readMetrics(root, limit = 200) {
-  const file = storePaths(root).metrics;
-  if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .slice(-limit)
+  return readJsonlTail(storePaths(root).metrics, limit)
     .map((line) => {
       try {
         return JSON.parse(line);

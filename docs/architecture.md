@@ -210,6 +210,25 @@ contains no prompts or raw outputs; `artifacts/` holds raw evidence. These are
 created only for conductor sessions and mapped native workers, not for unrelated
 sessions.
 
+### 3.1 Capsule projection
+
+`capsule.md` is rebuilt from state, never summarized from the transcript. Its
+budget is `config.context.maxCapsuleTokens` (default 1800 tokens).
+
+- **Pinned:** PROJECT (the exact path passed to every `enhance_*` call), NEXT
+  (first in-progress task, else the first pending task, else the oldest active
+  job), and LAST CHECK.
+- **Ordered by priority:** GOAL, ACCEPTANCE, CONSTRAINTS, WORKERS, BRIEF, PLAN,
+  ACTIVE JOBS, WORKTREES, RECENT DECISIONS, ARTIFACTS.
+- **Bounded inputs:** PLAN 30 tasks, ACTIVE JOBS 12, WORKTREES 10, RECENT
+  DECISIONS 8, ARTIFACTS 10.
+- **Degradation:** PLAN is truncated inside the budget with `(N more tasks
+  omitted)`; skipped sections are named in `OMITTED`; a final hard cap appends
+  `…[capsule truncated]`.
+
+Pinned sections are inserted first, so the conductor keeps its working set even
+when the rest does not fit.
+
 ## 4. Hooks (Qoder adapter)
 
 | Event | Role |

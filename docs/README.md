@@ -30,7 +30,8 @@ This page is the index and authority order for the repository documentation. Whe
 
 ```bash
 npm test
+node --test test/docs.test.mjs
 node --test test/state-root.test.mjs
 ```
 
-Bilingual and link checks are not automated yet; a small script can compare heading levels and resolve every relative link.
+`test/docs.test.mjs` enforces heading levels, verbatim fences, table shape, back-links, relative links, and line-count parity (with documented exceptions).

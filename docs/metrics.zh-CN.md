@@ -44,6 +44,41 @@ state 3KB，每一步的工具输出与推理取值见 `src/core/metrics.mjs`。
 
 该 demo **不会**调用模型；它证明的是管线接通，不是模型质量。
 
+## Hook 遥测（Qoder v0.2）
+
+hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要或原始工具输出。
+用 `mhe report` 读取；
+加 `--json` 输出原始汇总：
+
+| 事件 | 记录字段 |
+|---|---|
+| `session_start` | model、source、session id、capsule 字符/tokens |
+| `prompt_submitted` | prompt 字符数、goal 字符数、capsule tokens |
+| `dispatch` / `tool_denied` | tool、allow、gate |
+| `job_start` / `job_stop` | agent 类型、job id、status、valid、retryable、结果 tokens |
+| `agent_result` | valid、status、原始与压缩后 envelope tokens |
+| `tool_output_captured` | bytes、mode |
+| `compaction` / `session_stop` | trigger、capsule tokens、blocked、未 land 数 |
+
+`mhe report` 汇总 job 数、非法率、envelope 大小、capsule tokens、拒绝数、
+捕获字节数以及按 agent 的统计；
+它也会打印**未**测量的项。
+
+### 已采集与未采集
+
+| 量 | 状态 | 来源 |
+|---|---|---|
+| `M_T`（收尾主 context） | 仅模拟 | `bench`、`demo` |
+| `b`（每轮增长） | 未采集 | 需要宿主 context 快照 |
+| `B`（累积输入） | 未采集 | 需要逐轮 context 记账 |
+| `C`（实际计费） | 未采集 | 需要 provider 账单数据 |
+| 构成 | 模拟；单次派发体积已采集 | `bench`、`agent_result` |
+| envelope / capsule tokens | 已采集 | hook 遥测 |
+
+hook 看不到完整主 context，因此 `agent_result.compact_tokens` 是“本次进入主
+context 的量”的最佳代理。
+不要把模拟的 `M_T` 缩减当成增长速率测量。
+
 ## 真实会话测量（Qoder）
 
 Qoder 提供了一个 context 用量面板，类别包括 `system_prompt`、

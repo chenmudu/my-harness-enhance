@@ -98,6 +98,42 @@ test('decisions are append-only', () => {
   assert.equal(decisions[0].decision, 'Use supertest');
 });
 
+test('decision and metric readers use the tail across chunk boundaries', () => {
+  const root = tmpRoot();
+  initStore(root);
+  const decisions = Array.from({ length: 600 }, (_, index) => JSON.stringify({
+    at: '2026-10-24T00:00:00.000Z',
+    decision: `d${index} ${'x'.repeat(180)}`,
+    rationale: 'r'.repeat(50),
+  }));
+  fs.writeFileSync(storePaths(root).decisions, `${decisions.join('\n')}\n`);
+
+  const lastThree = readDecisions(root, 3);
+  assert.equal(lastThree.length, 3);
+  assert.match(lastThree[0].decision, /^d597 /);
+  assert.match(lastThree[2].decision, /^d599 /);
+
+  const many = readDecisions(root, 500);
+  assert.equal(many.length, 500);
+  assert.match(many[0].decision, /^d100 /);
+  assert.deepEqual(readDecisions(root, 0), []);
+
+  fs.appendFileSync(storePaths(root).decisions, 'not-json\n');
+  assert.deepEqual(readDecisions(root, 1), []);
+
+  const metrics = Array.from({ length: 400 }, (_, index) => JSON.stringify({
+    at: '2026-10-24T00:00:00.000Z',
+    event: 'job_stop',
+    seq: index,
+    pad: 'y'.repeat(180),
+  }));
+  fs.writeFileSync(storePaths(root).metrics, `${metrics.join('\n')}\n`);
+  const tail = readMetrics(root, 2);
+  assert.equal(tail.length, 2);
+  assert.equal(tail[0].seq, 398);
+  assert.equal(tail[1].seq, 399);
+});
+
 test('jobs upsert and lookup by agent id', () => {
   const root = tmpRoot();
   initStore(root);

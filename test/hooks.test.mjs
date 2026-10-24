@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { initStore, readGoal, readJobs, readPlan, storePaths, upsertJob, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
+import { initStore, readGoal, readJobs, readMetrics, readPlan, storePaths, upsertJob, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
 import { canonicalPath } from '../src/core/state-root.mjs';
 import { saveConfig } from '../src/core/config.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
@@ -637,4 +637,69 @@ test('logging=errors writes only denials and invalid results', () => {
   assert.ok(fs.existsSync(logFile));
   const entries = fs.readFileSync(logFile, 'utf8').trim().split('\n').map(JSON.parse);
   assert.ok(entries.some((entry) => entry.allow === false && entry.tool === 'Bash'));
+});
+
+test('hooks write counts and sizes to metrics without prompts or summaries', () => {
+  const root = setupRoot();
+  runHook(root, 'SessionStart', {
+    model: 'qfmodel',
+    source: 'startup',
+    session_id: 'session_metrics',
+  });
+  runHook(root, 'UserPromptSubmit', {
+    session_id: 'session_metrics',
+    prompt: 'secret prompt text',
+  });
+  runHook(root, 'SubagentStart', {
+    session_id: 'session_metrics',
+    agent_id: 'agent_metrics',
+    agent_type: 'Explore',
+  });
+  runHook(root, 'SubagentStop', {
+    session_id: 'session_metrics',
+    agent_id: 'agent_metrics',
+    agent_type: 'Explore',
+    result: JSON.stringify(valid),
+  });
+  runHook(root, 'PostToolUse', {
+    model: 'qfmodel',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore' },
+    tool_response: JSON.stringify(valid),
+  });
+  runHook(root, 'PreCompact', { trigger: 'auto', session_id: 'session_metrics' });
+  runHook(root, 'Stop', { session_id: 'session_metrics' });
+
+  const metrics = readMetrics(root, 100);
+  const events = metrics.map((entry) => entry.event);
+  for (const event of ['session_start', 'prompt_submitted', 'job_start', 'job_stop', 'agent_result', 'compaction', 'session_stop']) {
+    assert.ok(events.includes(event), `${event} missing`);
+  }
+
+  const started = metrics.find((entry) => entry.event === 'session_start');
+  assert.equal(started.session_id, 'session_metrics');
+  assert.equal(started.source, 'startup');
+  assert.ok(started.capsule_tokens > 0);
+
+  const prompt = metrics.find((entry) => entry.event === 'prompt_submitted');
+  assert.equal(prompt.prompt_chars, 'secret prompt text'.length);
+  assert.ok(prompt.capsule_tokens > 0);
+
+  const stopped = metrics.find((entry) => entry.event === 'job_stop');
+  assert.equal(stopped.valid, true);
+  assert.equal(stopped.status, 'ok');
+  assert.ok(stopped.result_tokens > 0);
+
+  const result = metrics.find((entry) => entry.event === 'agent_result');
+  assert.equal(result.valid, true);
+  assert.ok(result.compact_tokens > 0);
+  assert.ok(result.result_tokens > 0);
+
+  const compaction = metrics.find((entry) => entry.event === 'compaction');
+  assert.equal(compaction.trigger, 'auto');
+  assert.ok(compaction.capsule_tokens > 0);
+
+  const serialized = JSON.stringify(metrics);
+  assert.doesNotMatch(serialized, /secret prompt text/);
+  assert.doesNotMatch(serialized, /Task complete\./);
 });

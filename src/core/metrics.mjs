@@ -187,3 +187,116 @@ export function benchmarkReport(scenarios = defaultScenarios()) {
   lines.push('reduction ratio as the signal, not the absolute number.');
   return lines.join('\n');
 }
+
+function metricNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function metricStats(values) {
+  const numbers = values.map(metricNumber).filter((value) => value !== null);
+  if (numbers.length === 0) return { count: 0, avg: 0, max: 0, latest: 0 };
+  const total = numbers.reduce((sum, value) => sum + value, 0);
+  return {
+    count: numbers.length,
+    avg: Math.round((total / numbers.length) * 10) / 10,
+    max: Math.max(...numbers),
+    latest: numbers[numbers.length - 1],
+  };
+}
+
+/**
+ * Aggregate hook-written metric entries. Only counts and sizes are summarized;
+ * prompts, summaries, and raw tool output are never recorded by the hooks.
+ */
+export function summarizeMetrics(metrics = []) {
+  const entries = Array.isArray(metrics)
+    ? metrics.filter((entry) => entry && typeof entry === 'object')
+    : [];
+  const events = {};
+  const denials = {};
+  const statuses = {};
+  const workers = {};
+  const envelopeTokens = [];
+  const agentResultTokens = [];
+  const capsuleTokens = [];
+  let firstAt = '';
+  let lastAt = '';
+  let started = 0;
+  let stopped = 0;
+  let valid = 0;
+  let invalid = 0;
+  let retryable = 0;
+  let capturedBytes = 0;
+  let agentValid = 0;
+  let agentInvalid = 0;
+
+  for (const entry of entries) {
+    const event = String(entry.event || 'unknown');
+    events[event] = (events[event] || 0) + 1;
+    const at = String(entry.at || '');
+    if (at) {
+      if (!firstAt) firstAt = at;
+      lastAt = at;
+    }
+    const agent = String(entry.agent_type || '');
+    if (agent) workers[agent] = workers[agent] || { starts: 0, stops: 0, invalid: 0 };
+
+    if (event === 'job_start') {
+      started += 1;
+      if (agent) workers[agent].starts += 1;
+    } else if (event === 'job_stop') {
+      stopped += 1;
+      if (agent) workers[agent].stops += 1;
+      if (entry.valid === true) {
+        valid += 1;
+      } else {
+        invalid += 1;
+        if (agent) workers[agent].invalid += 1;
+      }
+      if (entry.retryable === true) retryable += 1;
+      const status = String(entry.status || 'unknown');
+      statuses[status] = (statuses[status] || 0) + 1;
+      envelopeTokens.push(entry.result_tokens);
+    } else if (event === 'agent_result') {
+      if (entry.valid === true) agentValid += 1;
+      else agentInvalid += 1;
+      agentResultTokens.push(entry.compact_tokens);
+    } else if (event === 'tool_output_captured') {
+      capturedBytes += metricNumber(entry.bytes) || 0;
+    }
+
+    if (event === 'tool_denied' || event === 'worker_tool_denied') {
+      const gate = String(entry.gate || (event === 'worker_tool_denied' ? 'worker' : 'other'));
+      denials[gate] = (denials[gate] || 0) + 1;
+    }
+    const capsule = metricNumber(entry.capsule_tokens);
+    if (capsule !== null) capsuleTokens.push(capsule);
+  }
+
+  return {
+    entries: entries.length,
+    firstAt,
+    lastAt,
+    events,
+    denials,
+    jobs: {
+      started,
+      stopped,
+      valid,
+      invalid,
+      retryable,
+      invalidRate: stopped ? Math.round((invalid / stopped) * 1000) / 1000 : 0,
+      statuses,
+    },
+    envelopeTokens: metricStats(envelopeTokens),
+    agentResults: {
+      count: agentValid + agentInvalid,
+      valid: agentValid,
+      invalid: agentInvalid,
+      compactTokens: metricStats(agentResultTokens),
+    },
+    capsuleTokens: metricStats(capsuleTokens),
+    capturedBytes,
+    workers,
+  };
+}

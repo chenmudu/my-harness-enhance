@@ -13,7 +13,7 @@
 - Global mode: install once per machine; new sessions in any workspace
   auto-register; MCP tools route by `project`/env/cwd; existing sessions are not
   retrofitted.
-- 210 tests; demo; benchmark; Qoder install with 1 fallback agent; Qoder read-only,
+- 221 tests; demo; benchmark; Qoder install with 1 fallback agent; Qoder read-only,
   write+verify sessions; installed hook simulation.
 - One conductor + native workers; workers are leaves (Agent/Task denied), so
   there is no silent nested fan-out.

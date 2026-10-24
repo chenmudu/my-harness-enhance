@@ -5,7 +5,7 @@ import process from 'node:process';
 import { enableProject, disableProject, ensureState, loadConfig, saveConfig, stateDirFor } from '../src/core/config.mjs';
 import { buildCapsule, writeCapsule } from '../src/core/capsule.mjs';
 import { putArtifact } from '../src/core/artifacts.mjs';
-import { benchmarkReport, defaultScenarios } from '../src/core/metrics.mjs';
+import { benchmarkReport, defaultScenarios, summarizeMetrics } from '../src/core/metrics.mjs';
 import { readJobs, readMetrics, storePaths } from '../src/core/store.mjs';
 import { summarizeWorkers } from '../src/core/capabilities.mjs';
 import { enhanceHome, projectKey } from '../src/core/state-root.mjs';
@@ -55,6 +55,7 @@ Usage:
   mhe capsule [--root <project>]
   mhe artifact <file> [--kind <kind>] [--summary <text>]
   mhe metrics [--root <project>]
+  mhe report [--root <project>] [--json] [--limit <n>]
   mhe enable|disable [--root <project>]
   mhe bench [--json]
   mhe demo
@@ -394,6 +395,68 @@ function cmdMetrics(args) {
   }
 }
 
+function cmdReport(args) {
+  const root = rootFrom(args);
+  const limit = Number(args.limit) > 0 ? Number(args.limit) : 2000;
+  const metrics = readMetrics(root, limit);
+  const summary = summarizeMetrics(metrics);
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify({ root, summary }, null, 2)}\n`);
+    return;
+  }
+
+  const lines = [];
+  lines.push(`report: ${root}`);
+  lines.push(`entries: ${summary.entries}${summary.firstAt ? ` (${summary.firstAt} -> ${summary.lastAt})` : ''}`);
+  if (summary.entries === 0) {
+    lines.push('');
+    lines.push('No hook metrics recorded yet; the next conductor session writes them.');
+  }
+
+  lines.push('');
+  lines.push('events:');
+  const eventEntries = Object.entries(summary.events).sort((a, b) => b[1] - a[1]);
+  if (eventEntries.length === 0) lines.push('- (none)');
+  for (const [event, count] of eventEntries) lines.push(`- ${event}: ${count}`);
+
+  lines.push('');
+  lines.push(
+    `jobs: started=${summary.jobs.started} stopped=${summary.jobs.stopped} `
+    + `valid=${summary.jobs.valid} invalid=${summary.jobs.invalid} `
+    + `retryable=${summary.jobs.retryable} invalid_rate=${(summary.jobs.invalidRate * 100).toFixed(1)}%`,
+  );
+  const statuses = Object.entries(summary.jobs.statuses).sort((a, b) => b[1] - a[1]);
+  if (statuses.length) lines.push(`statuses: ${statuses.map(([name, count]) => `${name}=${count}`).join(', ')}`);
+  lines.push(
+    `envelope tokens: avg=${summary.envelopeTokens.avg} max=${summary.envelopeTokens.max} `
+    + `n=${summary.envelopeTokens.count}`,
+  );
+  lines.push(
+    `agent results: valid=${summary.agentResults.valid} invalid=${summary.agentResults.invalid} `
+    + `compact_avg=${summary.agentResults.compactTokens.avg} compact_max=${summary.agentResults.compactTokens.max}`,
+  );
+  lines.push(
+    `capsule tokens: latest=${summary.capsuleTokens.latest} max=${summary.capsuleTokens.max} `
+    + `n=${summary.capsuleTokens.count}`,
+  );
+  lines.push(`tool output captured: ${summary.capturedBytes} bytes`);
+  const denials = Object.entries(summary.denials).sort((a, b) => b[1] - a[1]);
+  lines.push(`denials: ${denials.length ? denials.map(([gate, count]) => `${gate}=${count}`).join(', ') : '(none)'}`);
+
+  const workers = Object.entries(summary.workers).sort((a, b) => a[0].localeCompare(b[0]));
+  if (workers.length) {
+    lines.push('');
+    lines.push('workers:');
+    for (const [agent, counts] of workers) {
+      lines.push(`- ${agent}: start=${counts.starts} stop=${counts.stops} invalid=${counts.invalid}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('not measured by hooks: M_T, b, B, C, attention density (host usage data is required).');
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
 function cmdBench(args) {
   const scenarios = defaultScenarios();
   if (args.json) process.stdout.write(`${JSON.stringify(scenarios, null, 2)}\n`);
@@ -451,6 +514,9 @@ function main() {
       break;
     case 'metrics':
       cmdMetrics(args);
+      break;
+    case 'report':
+      cmdReport(args);
       break;
     case 'bench':
       cmdBench(args);
