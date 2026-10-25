@@ -130,9 +130,24 @@ export function reviewPlan(count = 15, seed = 7) {
   return plan;
 }
 
+export const MODULE_SLOTS = 30;
+
+/**
+ * A module is eight functions: one carries the planted defect, the rest are
+ * sound. A review needs something worth reading; a 20-line module makes the
+ * baseline's per-turn input trivial and the comparison meaningless.
+ */
 export function renderModule(entry) {
-  const { name, doc, body, extra } = entry.template.make(entry.seed, entry.template.defect);
-  return `${HEADER}\n${doc}\nexport function ${name}(values) {\n${body}\n}\n${extra}`;
+  const parts = [];
+  for (let slot = 0; slot < MODULE_SLOTS; slot += 1) {
+    const template = TEMPLATES[(entry.index + slot) % TEMPLATES.length];
+    const defect = slot === 0 ? entry.template.defect : null;
+    const seed = entry.seed + slot * 7;
+    const { name, doc, body, extra } = template.make(seed, defect);
+    const suffix = slot === 0 ? '' : String(slot);
+    parts.push(`${doc}\nexport function ${name}${suffix}(values) {\n${body}\n}\n${extra}`);
+  }
+  return `${HEADER}\n${parts.join('\n')}`;
 }
 
 export function renderPatch(entry) {
