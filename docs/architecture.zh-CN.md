@@ -255,12 +255,18 @@ conductor 会话和被映射的原生 worker 创建，
 固定段先写入，因此即使其余内容放不下，
 conductor 的工作集仍在。
 
+capsule 是状态投影，不是注意力包：
+它按优先级把账本重述一遍，而不是挑出当前决策真正需要的那一部分；
+也没有任何东西在度量某块注入是否相关。
+因此 `docs/metrics.md` 里的注意力密度目标，
+这一版设计还没有达到。
+
 ## 4. Hooks（Qoder adapter）
 
 | 事件 | 角色 |
 |---|---|
 | `SessionStart` | 识别 conductor 会话；注入策略 + capsule；在 compact/resume 时重新注入 |
-| `UserPromptSubmit` | 设定首个 goal；把后续追问写入日志；重新注入 capsule |
+| `UserPromptSubmit` | 设定首个 goal；把后续追问写入日志；重新注入完整策略和 capsule（目标：短锚 + 状态差异） |
 | `PreToolUse` | conductor 工具白名单；按 agent 类型套用原生 worker 策略（readonly/leaf/notools/lead）；subagent 白名单 |
 | `SubagentStart` | 创建 job；注入角色 + worker 契约 + goal/验收标准 |
 | `SubagentStop` | 解析/存储 envelope；更新 job |

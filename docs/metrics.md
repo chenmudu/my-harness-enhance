@@ -2,6 +2,26 @@
 
 > Chinese version: [metrics.zh-CN.md](metrics.zh-CN.md).
 
+## Primary metric
+
+Attention density — the share of the injected tokens that the current decision
+actually needs — is what this layer is for. Everything else is a constraint or a
+proxy:
+
+| Quantity | Role | Status |
+| --- | --- | --- |
+| attention density | primary metric | not implemented |
+| `b` (growth per turn) | budget | collected per turn as `context_usage_ratio` |
+| `M_T` (final main context) | window check | simulated only |
+| `B` (cumulative input) | cost | not collected |
+| `C` (billed cost) | economics | not collected |
+
+The order is attention density > context structure > growth rate > token cost. A
+projection that shows only the current task scores close to 100% on the ratio
+while hiding the rest of the ledger, so the ratio only means something next to
+task success, cost, and behavior signals. Do not headline the simulated `M_T`
+reduction.
+
 ## Token estimator
 
 `estimateTokens` is dependency-free and deliberately rough:
@@ -11,7 +31,7 @@
 - whitespace: 0.
 
 Use the same estimator on both sides of an A/B comparison. The absolute number
-is approximate; the reduction ratio is the signal.
+is approximate, so only compare numbers produced by the same estimator.
 
 ## Simulated scenarios
 
@@ -73,15 +93,17 @@ report aggregates all entries and lists per-session counts.
 | Quantity | Status | Source |
 |---|---|---|
 | `M_T` (final main context) | simulated only | `bench`, `demo` |
-| `b` (growth per turn) | not collected | needs host context snapshots |
+| `b` (growth per turn) | collected per turn | `context_usage_ratio` in `mhe ab` |
 | `B` (cumulative input) | not collected | needs per-turn context accounting |
 | `C` (billed cost) | not collected | needs provider billing data |
-| Composition | simulated; per-dispatch sizes collected | `bench`, `agent_result` |
+| Composition | measured from the transcript | CLI session `.jsonl` |
 | Envelope / capsule tokens | collected | hook telemetry |
+| Attention density | not collected | needs a packet and behavior labels |
 
 The hook cannot see the full main context, so `agent_result.compact_tokens` is
-the best per-dispatch proxy for what enters it. Do not present the simulated
-`M_T` reduction as a growth-rate measurement.
+the best per-dispatch proxy for what enters it, and composition needs the CLI
+transcript. Do not present the simulated `M_T` reduction as a growth-rate
+measurement.
 
 ## Real-session measurement (Qoder)
 
@@ -114,8 +136,19 @@ grows with decisions and result summaries, not with execution details**.
 
 `mhe ab` runs one scripted multi-turn task twice: once against a plain Qoder
 config (baseline) and once against a config with the harness installed
-(treatment). Each turn is a separate CLI process that resumes the same session,
-so the context grows the way a real long session grows.
+(treatment). Each turn is a separate CLI process that resumes the same session.
+
+That restart is not free and it is not like a real session: `SessionStart` fires
+once per process, so a 15-turn run fires it 15 times where a real session fires
+it once. Measured on a 15-turn run, the conductor policy plus capsule reached
+the transcript 29 times (60.6k tokens), and 29.1k of that was `SessionStart`
+copies that a real session would not pay. Treat `mhe ab` as a token-growth
+probe, not as a measurement of attention density.
+
+To attribute what actually enters the conductor, read the CLI session transcript
+at `<config-dir>/projects/<workspace-key>/<session>.jsonl` and sum its entries by
+type (`user` tool results, `attachment` hook injections, `assistant` text and
+thinking). That is how the numbers above were produced.
 
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
@@ -142,7 +175,8 @@ with one test file; the deterministic check is `node --test`.
 
 | Metric | What it proves | Target |
 |---|---|---|
-| Main context reduction | attention is offloaded | >80% in simulation; flat growth in real runs |
+| Attention density | the conductor sees what the decision needs | every injected block maps to a current decision; not measured yet |
+| Main context growth (`b`) | execution detail stays out of the main context | below baseline on the same task shape; not demonstrated yet |
 | Tool-schema share | conductor tool surface is small | <25% of main context |
 | Invalid envelope leak rate | contract enforcement works | 0 raw invalid blobs in main context |
 | Goal retention | conductor keeps the goal | correct restatement after compaction |

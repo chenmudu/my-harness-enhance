@@ -4,6 +4,11 @@
 
 **一个面向长周期任务的、跨 harness 的控制面（control plane）。**
 
+**主指标是注意力密度**：进入 conductor context 的内容里，
+当前决策真正需要的那个比例。
+context 增长速度是预算，
+token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.md)。
+
 宿主 harness 仍然负责运行 agent：模型循环、工具运行时、会话、
 压缩、权限和子 agent 都保持原生。这一层位于它们之上，
 决定 conductor 看到什么、派发什么、什么算完成、度量什么；
@@ -48,10 +53,20 @@
 
 ## 状态
 
-- **222/222 测试通过（Windows）**。
-- Qoder 已在只读、写、验证会话上端到端验证。
-- ZCode adapter 已实现项目级和全局模式；`reason` 使用只读 Explore 兼容模式，worker contract 强制内嵌，synthetic job 补偿 SubagentStop。原生仍没有 result rewrite/SubagentStop/PreCompact。
-- 待验证：相对单会话全包的真实 wall-clock 对比、并发代码集成冲突、长周期压缩、Codex/DSH adapter。
+- **276/276 测试通过（Windows）**；macOS 与 Linux 还没有 CI 覆盖。
+- Qoder 已在只读、写、验证会话上端到端验证；
+  同一 workspace 下的两个并发会话各自持有独立的状态分片。
+- ZCode adapter 已实现项目级和全局模式；
+  `reason` 使用只读 Explore 兼容模式，worker contract 强制内嵌，
+  synthetic job 补偿 SubagentStop。
+  原生仍没有 result rewrite/SubagentStop/PreCompact。
+- **机制已验证；主指标还没有实现。**
+  conductor 每轮仍然收到完整策略和整份 capsule，
+  也没有任何东西在采注意力密度或行为信号
+  （下一步动作、做错任务、重读、恢复）。
+  现有的长周期 A/B 只测 token 增长。
+- 待验证：不重启 CLI 的 wall-clock 对比、并发代码集成冲突、
+  长周期压缩、Codex/DSH adapter。
 
 ## 文档
 

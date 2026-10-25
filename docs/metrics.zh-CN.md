@@ -2,6 +2,26 @@
 
 > 本文是 [metrics.md](metrics.md) 的中文译本，如与原文有出入，以原文为准。
 
+## 主指标
+
+注意力密度——注入的 token 里，当前决策真正需要的那一份——
+才是这一层的目标。其余量都是约束或代理，
+单独报任何一个都会把目标说窄：
+
+| 量 | 角色 | 状态 |
+| --- | --- | --- |
+| 注意力密度 | 主指标 | 未实现 |
+| `b`（每轮增长） | 预算 | 逐轮以 `context_usage_ratio` 采集 |
+| `M_T`（收尾主 context） | 窗口检查 | 仅模拟 |
+| `B`（累积输入） | 成本 | 未采集 |
+| `C`（实际计费） | 经济 | 未采集 |
+
+排序是 注意力密度 > context 结构 > 增长速度 > token 成本。
+只显示当前任务就能把这个比值做到接近 100%，同时把账本其余部分藏起来；
+所以它只有和任务成功率、成本、行为信号一起看才有意义。
+账本是完整事实源，注意力包只是 view——view 可以窄，账本不能丢。
+不要把模拟的 `M_T` 缩减当标题。
+
 ## Token 估算器
 
 `estimateTokens` 不依赖任何第三方库，并且刻意做得粗略：
@@ -10,8 +30,8 @@
 - 其他非空白字符：每个 ~0.28 token（约 3.6 chars/token）；
 - 空白字符：0。
 
-A/B 对比的两侧要使用同一个估算器。绝对数值只是近似值；
-真正的信号是缩减比例。
+A/B 对比的两侧要使用同一个估算器。
+绝对数值只是近似值，所以只比较同一个估算器产出的数字。
 
 ## 模拟场景
 
@@ -73,14 +93,16 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | 量 | 状态 | 来源 |
 |---|---|---|
 | `M_T`（收尾主 context） | 仅模拟 | `bench`、`demo` |
-| `b`（每轮增长） | 未采集 | 需要宿主 context 快照 |
+| `b`（每轮增长） | 逐轮采集 | `mhe ab` 里的 `context_usage_ratio` |
 | `B`（累积输入） | 未采集 | 需要逐轮 context 记账 |
 | `C`（实际计费） | 未采集 | 需要 provider 账单数据 |
-| 构成 | 模拟；单次派发体积已采集 | `bench`、`agent_result` |
+| 构成 | 从 transcript 量出来 | CLI 会话 `.jsonl` |
 | envelope / capsule tokens | 已采集 | hook 遥测 |
+| 注意力密度 | 未采集 | 需要 packet 和行为标签 |
 
-hook 看不到完整主 context，因此 `agent_result.compact_tokens` 是“本次进入主
-context 的量”的最佳代理。
+hook 看不到完整主 context，因此 `agent_result.compact_tokens` 是
+“本次进入主 context 的量”的最佳代理；
+而构成必须读 CLI transcript。
 不要把模拟的 `M_T` 缩减当成增长速率测量。
 
 ## 真实会话测量（Qoder）
@@ -113,9 +135,20 @@ Baseline（不加这一层）：
 ## 长时 A/B runner
 
 `mhe ab` 会把同一个多轮脚本任务跑两遍：一遍对着普通的 Qoder 配置
-（baseline），一遍对着装了这个 harness 的配置（treatment）。每一轮都是一个
-独立的 CLI 进程，并通过 resume 复用同一个会话，
-因此 context 的增长方式和真实长会话一致。
+（baseline），一遍对着装了这个 harness 的配置（treatment）。
+每一轮都是一个独立的 CLI 进程，并通过 resume 复用同一个会话。
+
+这次重启不是免费的，也不等于真实会话：`SessionStart` 每个进程触发一次，
+所以 15 轮的 run 会触发 15 次，而真实会话只触发 1 次。
+在一轮 15 轮的实测里，conductor 策略加 capsule 进入 transcript 共 29 次
+（60.6k tokens），其中 29.1k 是真实会话不会付出的 `SessionStart` 副本。
+所以 `mhe ab` 是 token 增长的探针，不是注意力密度的测量。
+
+要归因“到底什么进了 conductor”，读 CLI 的会话 transcript：
+`<config-dir>/projects/<workspace-key>/<session>.jsonl`，
+按条目类型累加（`user` 工具结果、`attachment` hook 注入、
+`assistant` 文本与思考）。
+上面那些数字就是这么来的。
 
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
@@ -142,7 +175,8 @@ fixture 是一个零依赖的小库，每轮新增一个函数，
 
 | 指标 | 证明了什么 | 目标 |
 |---|---|---|
-| 主 context 缩减 | 注意力被卸载出去 | 模拟中 >80%；真实运行中增长持平 |
+| 注意力密度 | conductor 看到的是当前决策需要的 | 每块注入都能对应当前决策；尚未测量 |
+| 主 context 增长（`b`） | 执行细节留在主 context 之外 | 同一任务形状下低于 baseline；尚未证明 |
 | 工具 schema 占比 | conductor 的工具面很小 | 主 context 的 <25% |
 | 非法 envelope 泄漏率 | contract 约束生效 | 主 context 中 0 个原始非法 blob |
 | goal 保持 | conductor 守住了 goal | 压缩（compaction）后能正确复述 |

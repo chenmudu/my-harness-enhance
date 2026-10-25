@@ -13,7 +13,7 @@
 | [qoder-adapter.md](qoder-adapter.md) | Qoder 路径、安装布局、hook 载荷 | Qoder 专属设置 |
 | [worktrees.md](worktrees.md) | 代码 worktree、派发门禁、land | 代码交付 |
 | [brief-checks.md](brief-checks.md) | brief 字段、检查器 id、验收 | 验收 |
-| [metrics.md](metrics.md) | 度量什么、数字怎么读 | 度量 |
+| [metrics.md](metrics.md) | 主指标、度量什么、数字怎么读 | 度量 |
 | [retention.md](retention.md) | 保留期限与垃圾回收 | 状态生命周期 |
 | [roadmap.md](roadmap.md) | 计划中的工作 | 计划，不是当前行为 |
 | [../overlays/README.md](../overlays/README.md) | 个人 agent overlay | overlay 安装 |

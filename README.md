@@ -4,6 +4,11 @@
 
 **A harness-agnostic control plane for long-horizon agent work.**
 
+**The primary metric is attention density**: the share of what enters the
+conductor's context that the current decision actually needs. Context growth
+rate is the budget and token cost is the economic constraint, not the goal;
+see [docs/metrics.md](docs/metrics.md).
+
 The host harness still runs the agent: model loop, tool runtime, sessions,
 compaction, permissions, and subagents stay native. This layer sits above them.
 It decides what the conductor sees, what gets delegated, what counts as done,
@@ -48,10 +53,20 @@ everything in one long session.
 
 ## Status
 
-- **222/222 tests pass (Windows)**.
-- Qoder validated end-to-end for read-only, write, and verification sessions.
-- ZCode adapter implemented in project and global modes; `reason` uses read-only Explore compatibility, worker contract is mandatory, and synthetic jobs stand in for SubagentStop. Raw result rewrite/SubagentStop/PreCompact are still native absences.
-- Still to validate: real wall-clock comparison against a single long session, concurrent code integration conflicts, long-running compaction, and Codex/DSH adapters.
+- **276/276 tests pass (Windows)**; macOS and Linux are not covered by CI yet.
+- Qoder validated end-to-end for read-only, write, and verification sessions; two
+  concurrent sessions in one workspace keep separate state shards.
+- ZCode adapter implemented in project and global modes; `reason` uses read-only
+  Explore compatibility, worker contract is mandatory, and synthetic jobs stand in
+  for SubagentStop. Raw result rewrite/SubagentStop/PreCompact are still native
+  absences.
+- **The mechanism is validated; the primary metric is not.** The conductor still
+  receives the full policy and the whole capsule on every turn, and nothing
+  collects attention density or behavior signals (next action, wrong task,
+  re-read, recovery). The long-horizon A/B measures token growth only.
+- Still to validate: a wall-clock comparison that does not restart the CLI every
+  turn, concurrent code integration conflicts, long-running compaction, and
+  Codex/DSH adapters.
 
 ## Docs
 

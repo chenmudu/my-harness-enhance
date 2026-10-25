@@ -13,7 +13,7 @@ This page is the index and authority order for the repository documentation. Whe
 | [qoder-adapter.md](qoder-adapter.md) | Qoder paths, install layout, hook payloads | Qoder-specific setup |
 | [worktrees.md](worktrees.md) | Code worktrees, dispatch gate, land | Code delivery |
 | [brief-checks.md](brief-checks.md) | Brief fields, checker ids, acceptance | Acceptance |
-| [metrics.md](metrics.md) | What is measured and what the numbers mean | Measurements |
+| [metrics.md](metrics.md) | The primary metric, what is measured, what the numbers mean | Measurements |
 | [retention.md](retention.md) | Retention limits and garbage collection | State lifecycle |
 | [roadmap.md](roadmap.md) | Planned work | Plans, not current behavior |
 | [../overlays/README.md](../overlays/README.md) | Personal agent overlay | Overlay install |

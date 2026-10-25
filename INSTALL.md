@@ -274,7 +274,7 @@ machine's `~/.my-harness-enhance` state.
 ## 6. Verification
 
 ```bash
-node --test                 # 235 tests
+node --test                 # 276 tests
 node bin/mhe.mjs bench      # main-context simulation
 node bin/mhe.mjs demo       # state/contract/artifact demo
 node bin/mhe.mjs doctor --root "<project>"
