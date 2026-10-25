@@ -199,6 +199,9 @@ async function onUserPromptSubmit(payload, root, config) {
     capsule_tokens: estimateTokens(capsule),
     injected_chars: injected.text.length,
     injected_tokens: injected.tokens,
+    packet_tokens: injected.packetTokens,
+    relevant_tokens: injected.relevantTokens,
+    packet_hash: injected.hash,
     changed_sections: injected.changed.join(','),
   }, session);
   writeText(injected.text);

@@ -401,6 +401,9 @@ export function conductorTurnInjection(root, {
     removed,
     tokens: estimateTokens(text),
     fullTokens: packet.tokens,
+    packetTokens: packet.packetTokens,
+    relevantTokens: packet.relevantTokens,
+    hash: digest(packet.text),
   };
 }
 

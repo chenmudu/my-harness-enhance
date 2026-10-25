@@ -107,3 +107,23 @@ test('too many open loops closes the gate in the packet', () => {
   assert.match(packet.text, /## NOW\ndrain first:/);
   assert.equal(packet.debt, 6);
 });
+test('the packet reports what each section costs and what is about the decision', () => {
+  const root = makeRoot();
+  writePlan(root, Array.from({ length: 12 }, (_, index) => ({
+    id: `t${index + 1}`,
+    title: `task ${index + 1}`,
+    status: index === 0 ? 'in_progress' : 'pending',
+  })), { replace: true });
+  const packet = buildPacket(root);
+  const names = packet.sections.map((section) => section.name);
+  assert.ok(names.includes('NOW'));
+  assert.ok(names.includes('PARKED'));
+  assert.ok(names.includes('MORE'));
+  assert.ok(packet.packetTokens > 0);
+  assert.ok(packet.relevantTokens > 0);
+  assert.ok(packet.relevantTokens < packet.packetTokens);
+  assert.equal(
+    packet.sections.reduce((total, section) => total + section.tokens, 0),
+    packet.packetTokens,
+  );
+});

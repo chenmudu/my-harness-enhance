@@ -467,6 +467,13 @@ function cmdReport(args) {
     `capsule tokens: latest=${summary.capsuleTokens.latest} max=${summary.capsuleTokens.max} `
     + `n=${summary.capsuleTokens.count}`,
   );
+  if (summary.injection?.turns) {
+    const i = summary.injection;
+    lines.push(
+      `injection: turns=${i.turns} packet_avg=${i.packetAvg} relevant_avg=${i.relevantAvg} `
+      + `injected_avg=${i.injectedAvg} ratio=${i.ratio} density=${i.density} anchor_only=${i.anchorOnly}`,
+    );
+  }
   lines.push(`tool output captured: ${summary.capturedBytes} bytes`);
   const denials = Object.entries(summary.denials).sort((a, b) => b[1] - a[1]);
   lines.push(`denials: ${denials.length ? denials.map(([gate, count]) => `${gate}=${count}`).join(', ') : '(none)'}`);
@@ -481,7 +488,8 @@ function cmdReport(args) {
   }
 
   lines.push('');
-  lines.push('not measured by hooks: M_T, b, B, C, attention density (host usage data is required).');
+  lines.push('not measured by hooks: M_T, b, B, C (host usage data is required);');
+  lines.push('injection density is a packet composition ratio, not a behavior result.');
   process.stdout.write(`${lines.join('\n')}\n`);
 }
 

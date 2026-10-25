@@ -98,7 +98,12 @@ report aggregates all entries and lists per-session counts.
 | `C` (billed cost) | not collected | needs provider billing data |
 | Composition | measured from the transcript | CLI session `.jsonl` |
 | Envelope / capsule tokens | collected | hook telemetry |
-| Attention density | not collected | needs a packet and behavior labels |
+| Attention density | packet share collected; behavior side missing | `prompt_submitted` packet/relevant tokens |
+
+`density` is `relevant_tokens / packet_tokens`, where relevant means everything
+outside the PARKED and MORE sections. It says how much of the packet is about the
+current decision; it does not say the model acted on it, which is what the
+behavior labels are for.
 
 The hook cannot see the full main context, so `agent_result.compact_tokens` is
 the best per-dispatch proxy for what enters it, and composition needs the CLI

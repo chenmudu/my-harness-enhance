@@ -118,3 +118,23 @@ test('mhe report prints the summary and the unmeasured list', () => {
   assert.equal(parsed.summary.jobs.stopped, 1);
   assert.equal(parsed.summary.capsuleTokens.count, 0);
 });
+
+test('summarizeMetrics reports injection size, ratio and packet density', () => {
+  const summary = summarizeMetrics([
+    { at: '2026-10-24T10:00:00.000Z', event: 'prompt_submitted', packet_tokens: 120, relevant_tokens: 100, injected_tokens: 40, changed_sections: 'NOW,PLAN' },
+    { at: '2026-10-24T10:00:01.000Z', event: 'prompt_submitted', packet_tokens: 120, relevant_tokens: 100, injected_tokens: 20, changed_sections: '' },
+  ]);
+  assert.equal(summary.injection.turns, 2);
+  assert.equal(summary.injection.packetAvg, 120);
+  assert.equal(summary.injection.relevantAvg, 100);
+  assert.equal(summary.injection.injectedAvg, 30);
+  assert.equal(summary.injection.ratio, 0.25);
+  assert.equal(summary.injection.density, 0.833);
+  assert.equal(summary.injection.anchorOnly, 1);
+});
+
+test('a session with no injection telemetry reports zero turns', () => {
+  const summary = summarizeMetrics([{ at: '2026-10-24T10:00:00.000Z', event: 'session_start', capsule_tokens: 10 }]);
+  assert.equal(summary.injection.turns, 0);
+  assert.equal(summary.injection.density, null);
+});

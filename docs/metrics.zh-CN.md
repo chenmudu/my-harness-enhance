@@ -98,7 +98,12 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | `C`（实际计费） | 未采集 | 需要 provider 账单数据 |
 | 构成 | 从 transcript 量出来 | CLI 会话 `.jsonl` |
 | envelope / capsule tokens | 已采集 | hook 遥测 |
-| 注意力密度 | 未采集 | 需要 packet 和行为标签 |
+| 注意力密度 | packet 占比已采集；行为侧仍缺 | `prompt_submitted` 的 packet/relevant tokens |
+
+`density` = `relevant_tokens / packet_tokens`，
+其中 relevant 指除去 PARKED 与 MORE 之外的部分。
+它说明 packet 里有多少是关于当前决策的；
+它不说明模型是否照此行动，那要靠行为标签。
 
 hook 看不到完整主 context，因此 `agent_result.compact_tokens` 是
 “本次进入主 context 的量”的最佳代理；

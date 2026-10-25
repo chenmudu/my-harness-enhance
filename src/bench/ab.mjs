@@ -497,7 +497,7 @@ export function summarizeTurns(turns = []) {
     checks_ok: turns.filter((turn) => turn.check?.ok).length,
     final_check: turns.length ? turns[turns.length - 1].check : null,
     hooks: lastHooks
-      ? { entries: lastHooks.entries, events: lastHooks.events, denials: lastHooks.denials, jobs: lastHooks.jobs }
+      ? { entries: lastHooks.entries, events: lastHooks.events, denials: lastHooks.denials, jobs: lastHooks.jobs, injection: lastHooks.injection }
       : null,
   };
 }
@@ -560,7 +560,7 @@ async function runArm({
           : null,
         check: checked,
         hooks: hooks
-          ? { entries: hooks.entries, events: hooks.events, denials: hooks.denials, jobs: hooks.jobs }
+          ? { entries: hooks.entries, events: hooks.events, denials: hooks.denials, jobs: hooks.jobs, injection: hooks.injection }
           : null,
         error: ok ? '' : (refusal || payload?.result || result.error || 'no result payload'),
       });

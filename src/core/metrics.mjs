@@ -232,6 +232,7 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
   const envelopeTokens = [];
   const agentResultTokens = [];
   const capsuleTokens = [];
+  const injection = [];
   let firstAt = '';
   let lastAt = '';
   let started = 0;
@@ -284,6 +285,14 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
     }
     const capsule = metricNumber(entry.capsule_tokens);
     if (capsule !== null) capsuleTokens.push(capsule);
+    if (event === 'prompt_submitted' && metricNumber(entry.packet_tokens) !== null) {
+      injection.push({
+        packet: metricNumber(entry.packet_tokens),
+        relevant: metricNumber(entry.relevant_tokens),
+        injected: metricNumber(entry.injected_tokens),
+        changed: String(entry.changed_sections || ''),
+      });
+    }
   }
 
   return {
@@ -311,7 +320,34 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
       compactTokens: metricStats(agentResultTokens),
     },
     capsuleTokens: metricStats(capsuleTokens),
+    injection: summarizeInjection(injection),
     capturedBytes,
     workers,
+  };
+}
+
+/**
+ * Injection telemetry. `density` is the packet's share that is about the current
+ * decision (everything outside PARKED and MORE); it is a composition ratio, not
+ * a behavior result, so it is only meaningful next to the behavior labels.
+ */
+function summarizeInjection(rows) {
+  const turns = rows.length;
+  if (!turns) {
+    return { turns: 0, packetAvg: null, relevantAvg: null, injectedAvg: null, ratio: null, density: null, anchorOnly: 0 };
+  }
+  const sum = (pick) => rows.reduce((total, row) => total + (typeof row[pick] === 'number' ? row[pick] : 0), 0);
+  const packetAvg = Math.round(sum('packet') / turns);
+  const relevantAvg = Math.round(sum('relevant') / turns);
+  const injectedAvg = Math.round(sum('injected') / turns);
+  const anchorOnly = rows.filter((row) => !String(row.changed || '').trim()).length;
+  return {
+    turns,
+    packetAvg,
+    relevantAvg,
+    injectedAvg,
+    ratio: packetAvg ? Math.round((injectedAvg / packetAvg) * 1000) / 1000 : null,
+    density: packetAvg ? Math.round((relevantAvg / packetAvg) * 1000) / 1000 : null,
+    anchorOnly,
   };
 }

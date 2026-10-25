@@ -149,6 +149,18 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
     if (estimateTokens(candidate) <= budget) text += render(name);
   }
   const finalText = fitToTokens(`[MY-HARNESS-ENHANCE PACKET v1]\n\n${text}`, budget, estimateTokens);
+  const parts = ORDER
+    .map((name) => ({
+      name,
+      tokens: sections[name]?.length
+        ? estimateTokens(`## ${name}\n${sections[name].join('\n')}\n\n`)
+        : 0,
+    }))
+    .filter((part) => part.tokens > 0);
+  const parkedTokens = parts
+    .filter((part) => part.name === 'PARKED' || part.name === 'MORE')
+    .reduce((total, part) => total + part.tokens, 0);
+  const totalTokens = parts.reduce((total, part) => total + part.tokens, 0);
   atomicWrite(
     storePaths(root, session).packet,
     `${JSON.stringify({ at: new Date().toISOString(), ...current }, null, 2)}\n`,
@@ -159,6 +171,9 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
     changed: changed.slice(0, CAPS.changed),
     gate: schedule.gate,
     debt: schedule.debt,
-    sections: ORDER.filter((name) => sections[name]?.length),
+    sections: parts,
+    relevantTokens: Math.max(0, totalTokens - parkedTokens),
+    parkedTokens,
+    packetTokens: totalTokens,
   };
 }
