@@ -251,8 +251,54 @@ function normalizeList(value) {
   return value.map((item) => String(item).trim()).filter(Boolean).slice(0, 20);
 }
 
+export const PLAN_VERSION = 2;
+const STALE_MS = 24 * 60 * 60 * 1000;
+
+function clampConfidence(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(1, Math.max(0, number));
+}
+
+/**
+ * Attention metadata lives on the task itself: what to do next, what blocks it,
+ * how much a miss costs, who says it is real, and when that was last known.
+ * `stale` is derived on read, never stored.
+ */
+function withAttention(task, previous = null) {
+  const { stale, ...rest } = { ...task };
+  const blockers = Array.isArray(rest.blockers)
+    ? rest.blockers.map((item) => String(item).slice(0, 120)).slice(0, 5)
+    : (previous?.blockers || []);
+  return {
+    ...rest,
+    next_action: String(rest.next_action ?? previous?.next_action ?? '').slice(0, 200),
+    blockers,
+    priority: Number.isFinite(Number(rest.priority))
+      ? Math.min(9, Math.max(1, Math.round(Number(rest.priority))))
+      : (previous?.priority ?? 3),
+    cost_of_miss: String(rest.cost_of_miss ?? previous?.cost_of_miss ?? '').slice(0, 200),
+    authority: String(rest.authority ?? previous?.authority ?? '').slice(0, 40),
+    confidence: clampConfidence(rest.confidence, previous?.confidence ?? null),
+    as_of: String(rest.as_of || previous?.as_of || new Date().toISOString()),
+  };
+}
+
+function taskIsStale(task) {
+  if (!['in_progress', 'pending'].includes(String(task.status))) return false;
+  const asOf = Date.parse(task.as_of);
+  return Number.isFinite(asOf) && (Date.now() - asOf) > STALE_MS;
+}
+
 export function readPlan(root, session = '') {
-  return readJson(readPath(root, session, 'plan'), { tasks: [], updated_at: null });
+  const raw = readJson(readPath(root, session, 'plan'), { tasks: [], updated_at: null });
+  const tasks = Array.isArray(raw.tasks) ? raw.tasks.map((task) => withAttention(task)) : [];
+  return {
+    version: PLAN_VERSION,
+    tasks: tasks.map((task) => ({ ...task, stale: taskIsStale(task) })),
+    updated_at: raw.updated_at || null,
+  };
 }
 
 export function readBrief(root, session = '') {
@@ -290,14 +336,15 @@ export function updatePlanTask(root, id, patch = {}, session = '') {
     const plan = readPlan(root, session);
     const index = (plan.tasks || []).findIndex((task) => task.id === id);
     if (index === -1) return null;
-    plan.tasks[index] = {
-      ...plan.tasks[index],
-      ...patch,
-      updated_at: new Date().toISOString(),
-    };
+    plan.tasks[index] = withAttention(
+      { ...plan.tasks[index], ...patch },
+      plan.tasks[index],
+    );
+    plan.tasks = plan.tasks.map((task) => withAttention(task));
+    plan.version = PLAN_VERSION;
     plan.updated_at = new Date().toISOString();
     atomicWrite(storePaths(root, session).plan, `${JSON.stringify(plan, null, 2)}\n`);
-    return plan.tasks[index];
+    return { ...plan.tasks[index], stale: taskIsStale(plan.tasks[index]) };
   });
 }
 
@@ -305,9 +352,11 @@ export function writePlan(root, tasks = [], { replace = false } = {}, session = 
   return withLock(root, () => {
     ensureSession(root, session);
     const previous = readPlan(root, session);
+    const previousById = new Map((previous.tasks || []).map((task) => [task.id, task]));
     const normalized = (Array.isArray(tasks) ? tasks : [])
       .slice(0, 50)
-      .map((task, index) => ({
+      .map((task, index) => withAttention({
+        ...task,
         id: String(task.id || `t${index + 1}`),
         title: String(task.title || task.task || task.id || '').slice(0, 300),
         status: String(task.status || 'pending'),
@@ -318,9 +367,11 @@ export function writePlan(root, tasks = [], { replace = false } = {}, session = 
         acceptance: String(task.acceptance || '').slice(0, 500),
         evidence: Array.isArray(task.evidence) ? task.evidence.map(String).slice(0, 10) : [],
         updated_at: new Date().toISOString(),
-      }))
+        as_of: task.as_of || new Date().toISOString(),
+      }, previousById.get(String(task.id || `t${index + 1}`))))
       .filter((task) => task.title);
     const next = {
+      version: PLAN_VERSION,
       tasks: replace ? normalized : mergePlan(previous.tasks, normalized),
       updated_at: new Date().toISOString(),
     };

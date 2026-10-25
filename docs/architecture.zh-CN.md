@@ -220,6 +220,12 @@ goal/plan 原语、会话存储。它们只是*如何实现*某条不变量而�
 
 状态存储才是唯一事实源（source of truth）。逐字记录不是。
 
+plan 任务在 status 之外还带注意力元数据：`next_action`、
+`blockers`、`priority`（1..9）、`cost_of_miss`、`authority`、`confidence` 和
+`as_of`。`stale` 在读取时派生——未完成且 `as_of` 超过一天——不落盘。
+`plan.json` 是 version 2；旧版本写出的 plan 读回来会补齐默认值，
+并保留它不认识的字段。
+
 工作状态按会话放在 `sessions/<sid>/` 下；config、capabilities、
 decisions、artifacts、metrics、`sessions.json`、logs 和锁是共享的。
 两个会话可以并发运行：它们只在共享的追加/写入路径上竞争，

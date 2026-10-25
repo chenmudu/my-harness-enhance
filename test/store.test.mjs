@@ -19,6 +19,7 @@ import {
   readPlan,
   readSession,
   storePaths,
+  updatePlanTask,
   upsertJob,
   withLock,
   writeGoal,
@@ -244,4 +245,92 @@ test('loadConfig migrates removed fake controls from persisted config', () => {
   assert.equal(config.conductor.maxFanout, undefined);
   assert.equal(config.conductor.allowedTools.includes('TaskCreate'), false);
   assert.equal(config.context.maxStateTokens, undefined);
+});
+
+test('plan tasks carry attention metadata with sane defaults', () => {
+  const root = tmpRoot();
+  initStore(root);
+  writePlan(root, [{ id: 't1', title: 'ship it', next_action: 'write the test' }], { replace: true });
+  const plan = readPlan(root);
+  assert.equal(plan.version, 2);
+  const task = plan.tasks[0];
+  assert.equal(task.next_action, 'write the test');
+  assert.deepEqual(task.blockers, []);
+  assert.equal(task.priority, 3);
+  assert.equal(task.authority, '');
+  assert.equal(task.confidence, null);
+  assert.match(task.as_of, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(task.stale, false);
+});
+
+test('attention values are bounded and unknown fields survive a write', () => {
+  const root = tmpRoot();
+  initStore(root);
+  writePlan(root, [{
+    id: 't1',
+    title: 'ship it',
+    priority: 42,
+    confidence: 1.7,
+    blockers: Array.from({ length: 9 }, (_, index) => `blocker ${index} ${'x'.repeat(200)}`),
+    cost_of_miss: 'c'.repeat(400),
+    authority: 'a'.repeat(80),
+    custom_field: 'kept',
+  }], { replace: true });
+  const task = readPlan(root).tasks[0];
+  assert.equal(task.priority, 9);
+  assert.equal(task.confidence, 1);
+  assert.equal(task.blockers.length, 5);
+  assert.ok(task.blockers[0].length <= 120);
+  assert.ok(task.cost_of_miss.length <= 200);
+  assert.ok(task.authority.length <= 40);
+  assert.equal(task.custom_field, 'kept');
+});
+
+test('a legacy plan without metadata migrates on read', () => {
+  const root = tmpRoot();
+  initStore(root);
+  const file = storePaths(root).plan;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({
+    tasks: [
+      { id: 'a', title: 'old one', status: 'in_progress' },
+      { id: 'b', title: 'old two', status: 'pending' },
+    ],
+    updated_at: '2026-10-01T00:00:00.000Z',
+  }, null, 2)}\n`, 'utf8');
+  const plan = readPlan(root);
+  assert.equal(plan.version, 2);
+  assert.deepEqual(plan.tasks.map((task) => task.id), ['a', 'b']);
+  assert.deepEqual(plan.tasks.map((task) => task.title), ['old one', 'old two']);
+  assert.deepEqual(plan.tasks.map((task) => task.status), ['in_progress', 'pending']);
+  assert.equal(plan.tasks[0].priority, 3);
+  assert.equal(plan.tasks[0].stale, false);
+});
+
+test('an unfinished task goes stale after a day', () => {
+  const root = tmpRoot();
+  initStore(root);
+  const old = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+  writePlan(root, [
+    { id: 'a', title: 'slow', status: 'in_progress', as_of: old },
+    { id: 'b', title: 'done', status: 'completed', as_of: old },
+  ], { replace: true });
+  const plan = readPlan(root);
+  assert.equal(plan.tasks[0].stale, true);
+  assert.equal(plan.tasks[1].stale, false);
+});
+
+test('updating a task refreshes as_of and keeps attention fields', () => {
+  const root = tmpRoot();
+  initStore(root);
+  writePlan(root, [{ id: 't1', title: 'ship', next_action: 'one', authority: 'user' }], { replace: true });
+  const before = readPlan(root).tasks[0];
+  const updated = updatePlanTask(root, 't1', { status: 'in_progress', next_action: 'two' });
+  assert.equal(updated.next_action, 'two');
+  assert.equal(updated.authority, 'user');
+  assert.equal(updated.stale, false);
+  assert.ok(Date.parse(updated.as_of) >= Date.parse(before.as_of));
+  const persisted = readPlan(root).tasks[0];
+  assert.equal(persisted.stale, false);
+  assert.equal(persisted.next_action, 'two');
 });

@@ -94,6 +94,14 @@ export function fitToTokens(text, maxTokens) {
   return `${text.slice(0, safeEnd(text, low))}${suffix}`;
 }
 
+function nextLine(task) {
+  if (!task) return '';
+  const base = task.title || task.task || task.id;
+  const action = task.next_action ? ` — next: ${task.next_action}` : '';
+  const blockers = task.blockers?.length ? ` (blocked: ${task.blockers.join('; ')})` : '';
+  return `${base}${action}${blockers}`;
+}
+
 export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
   const { config } = loadConfig(root);
   const budget = maxTokens ?? config.context.maxCapsuleTokens ?? 1800;
@@ -170,7 +178,7 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
     },
     {
       title: 'NEXT',
-      body: next ? clip(next.title || next.task || next.id, 400) : '',
+      body: next ? clip(nextLine(next), 400) : '',
       pinned: true,
     },
     { title: 'LAST CHECK', body: checkLine, pinned: true },

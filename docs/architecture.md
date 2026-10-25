@@ -220,6 +220,12 @@ User-level state (nothing in the project repo):
 
 The state store is the source of truth. The transcript is not.
 
+A plan task carries attention metadata next to its status: `next_action`,
+`blockers`, `priority` (1..9), `cost_of_miss`, `authority`, `confidence`, and
+`as_of`. `stale` is derived on read — an unfinished task whose `as_of` is more
+than a day old — and never stored. `plan.json` is version 2; a plan written by
+an older build reads back with defaults filled in and its unknown fields kept.
+
 Working state is per session under `sessions/<sid>/`; config, capabilities,
 decisions, artifacts, metrics, `sessions.json`, logs, and the lock are shared.
 Two sessions may run concurrently: they contend only on shared append/write

@@ -134,3 +134,16 @@ test('capsule keeps NEXT and LAST CHECK when the state is over budget', () => {
   assert.match(capsule, /## LAST CHECK/);
   assert.ok(estimateTokens(capsule) <= 300, `tokens ${estimateTokens(capsule)}`);
 });
+
+test('NEXT carries the next action and blockers when the task has them', () => {
+  const root = makeRoot();
+  writePlan(root, [{
+    id: 't1',
+    title: 'ship the endpoint',
+    status: 'in_progress',
+    next_action: 'wire the router',
+    blockers: ['missing migration'],
+  }], { replace: true });
+  const capsule = buildCapsule(root);
+  assert.match(capsule, /## NEXT\nship the endpoint — next: wire the router \(blocked: missing migration\)/);
+});
