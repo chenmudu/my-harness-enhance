@@ -77,6 +77,19 @@ export function expectedPaths(fixtureKind, turn, total) {
   return ['src/lib.mjs', 'test/lib.test.mjs'];
 }
 
+/**
+ * The oracle for one turn: the script table plus every path the prompt itself
+ * names. The prompt wins when it is more specific; the table keeps the label
+ * meaningful when the prompt only implies a file.
+ */
+export function expectedPathsFor(text, fixtureKind, turn, total) {
+  const scripted = expectedPaths(fixtureKind, turn, total);
+  const promptText = typeof text === 'string' ? text : textOf(text);
+  const named = pathsIn(promptText);
+  const extra = fixtureKind === 'review' ? [`answers/${String(turn).padStart(2, '0')}.txt`] : [];
+  return [...new Set([...scripted, ...named, ...extra])];
+}
+
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 
@@ -137,7 +150,7 @@ export function summarizeBehavior(entries, { fixtureKind = 'library', turns = 15
     const declared = turnNumberOf(events[from].message?.content);
     if (!declared) continue;
     const turn = declared;
-    const expected = expectedPaths(fixtureKind, turn, turns);
+    const expected = expectedPathsFor(events[from].message?.content, fixtureKind, turn, turns);
     const actions = [];
     let failed = false;
     for (let index = from; index < to; index += 1) {

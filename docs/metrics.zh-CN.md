@@ -162,6 +162,10 @@ transcript 里记录的是 conductor 的工具调用，不含 worker 的。
 
 | 标签 | 定义 |
 | --- | --- |
+每一轮的口径是「脚本表 + prompt 里点名的路径」：
+prompt 改写过只会放宽期望，不会让标签失效。
+同一份 transcript 永远得到同样的数字。
+
 | next-action 命中 | 一轮的第一个动作指向 prompt 期望的路径 |
 | wrong-task 写入 | 写操作落在该轮期望路径之外 |
 | re-read | 同一会话里重复读同一个文件 |

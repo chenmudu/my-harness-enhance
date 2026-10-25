@@ -162,6 +162,10 @@ only: the transcript records the conductor's tool calls, not the workers'.
 
 | label | definition |
 | --- | --- |
+The oracle for each turn is the script table plus every path the prompt itself
+names, so a reworded prompt widens the expectation instead of breaking the
+label. The same transcript always produces the same numbers.
+
 | next-action hit | the first action of a turn names a path the prompt expects |
 | wrong-task write | a write lands outside the expected paths for that turn |
 | re-read | a read of a file the same session already read |

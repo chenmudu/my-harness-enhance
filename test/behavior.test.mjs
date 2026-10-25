@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   expectedPaths,
+  expectedPathsFor,
   summarizeBehavior,
   transcriptPath,
 } from '../src/bench/behavior.mjs';
@@ -101,4 +102,33 @@ test('a stream-json prompt arrives as a content array and still labels', () => {
   );
   assert.equal(summary.turns[0].turn, 2);
   assert.equal(summary.totals.next_action_hit, 1);
+});
+test('the oracle takes paths the prompt names, not only the script table', () => {
+  const prompt = 'Step 2/15: add the helper to src/helpers.mjs and cover it in test/lib.test.mjs.';
+  const expected = expectedPathsFor(prompt, 'library', 2, 15);
+  assert.ok(expected.includes('src/helpers.mjs'));
+  assert.ok(expected.includes('src/lib.mjs'), 'script paths stay in the oracle');
+  assert.ok(expected.includes('test/lib.test.mjs'));
+
+  const entries = [
+    human(prompt),
+    toolUse('Write', { file_path: 'C:/ws/src/helpers.mjs' }),
+  ];
+  const summary = summarizeBehavior(entries, { fixtureKind: 'library', turns: 15 });
+  assert.equal(summary.turns[0].hit, true);
+  assert.equal(summary.turns[0].wrongTask, 0);
+});
+
+test('labels are reproducible: the same transcript yields the same numbers', () => {
+  const entries = [
+    human('Step 1/15: inspect'),
+    toolUse('Read', { file_path: 'C:\ws\src\lib.mjs' }),
+    toolUse('Read', { file_path: 'C:\ws\src\lib.mjs' }),
+    human('Step 2/15: edit'),
+    toolError(),
+    toolUse('Edit', { file_path: 'C:\ws\test\lib.test.mjs' }),
+  ];
+  const first = summarizeBehavior(entries, { fixtureKind: 'library', turns: 15 });
+  const second = summarizeBehavior(entries, { fixtureKind: 'library', turns: 15 });
+  assert.deepEqual(first, second);
 });
