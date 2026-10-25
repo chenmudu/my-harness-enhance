@@ -164,7 +164,7 @@ transcript 里记录的是 conductor 的工具调用，不含 worker 的。
 
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
-  --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash
+  --arm both --turns 15 --repeats 2 --model GLM-5.3-Flash
 ```
 
 runner 强制遵守的规则：

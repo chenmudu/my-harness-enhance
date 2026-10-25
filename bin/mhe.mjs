@@ -69,7 +69,7 @@ Usage:
   mhe bench [--json]
   mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir>
          [--arm both|baseline|treatment] [--turns 15] [--repeats 2]
-         [--model Qwen3.8-Flash] [--out <dir>] [--fixture-kind library|review]
+         [--model GLM-5.3-Flash] [--out <dir>] [--fixture-kind library|review]
          [--timeout-ms <ms>] [--dry-run]
   mhe demo
   mhe version | help

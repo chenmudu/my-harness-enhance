@@ -164,7 +164,7 @@ only: the transcript records the conductor's tool calls, not the workers'.
 
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
-  --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash
+  --arm both --turns 15 --repeats 2 --model GLM-5.3-Flash
 ```
 
 Rules the runner enforces:

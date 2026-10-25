@@ -93,9 +93,17 @@ function actionsOf(entry) {
     }));
 }
 
+function textOf(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((block) => (block && typeof block.text === 'string' ? block.text : '')).join(' ');
+  }
+  return '';
+}
+
 /** The scripted prompt carries its own turn number; fall back to position. */
 export function turnNumberOf(text) {
-  const source = String(text || '');
+  const source = typeof text === 'string' ? text : textOf(text);
   const step = source.match(/Step\s+(\d+)\s*\//i);
   if (step) return Number(step[1]);
   const patch = source.match(/patches[\\/](\d+)\.patch/i);

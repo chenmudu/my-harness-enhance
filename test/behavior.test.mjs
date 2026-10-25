@@ -88,3 +88,17 @@ test('the review fixture reads its turn number from the patch path', () => {
   assert.equal(summary.turns[0].turn, 4);
   assert.equal(summary.turns[0].hit, true);
 });
+
+test('a stream-json prompt arrives as a content array and still labels', () => {
+  const prompt = {
+    type: 'user',
+    origin: { kind: 'human' },
+    message: { role: 'user', content: [{ type: 'text', text: 'Read patches/02.patch and RULES.md.' }] },
+  };
+  const summary = summarizeBehavior(
+    [prompt, toolUse('Read', { file_path: 'C:\\ws\\patches\\02.patch' })],
+    { fixtureKind: 'review', turns: 15 },
+  );
+  assert.equal(summary.turns[0].turn, 2);
+  assert.equal(summary.totals.next_action_hit, 1);
+});

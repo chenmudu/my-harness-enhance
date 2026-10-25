@@ -10,7 +10,7 @@ import { summarizeMetrics } from '../core/metrics.mjs';
 import { buildReviewFixture, checkReviewAnswers, reviewPrompts } from './review-fixture.mjs';
 import { readTranscript, summarizeBehavior, transcriptPath } from './behavior.mjs';
 
-export const DEFAULT_MODEL = 'Qwen3.8-Flash';
+export const DEFAULT_MODEL = 'GLM-5.3-Flash';
 export const DEFAULT_TURNS = 15;
 export const DEFAULT_REPEATS = 2;
 export const ARMS = ['baseline', 'treatment'];
