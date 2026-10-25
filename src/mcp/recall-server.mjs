@@ -20,6 +20,7 @@ import {
   writeLastCheck,
   writePlan,
 } from '../core/store.mjs';
+import { scheduleNext } from '../core/attention.mjs';
 import {
   checkTaskDependencies,
   createWorktree,
@@ -361,20 +362,25 @@ function planSummary(plan) {
   const tasks = plan.tasks || [];
   const counts = {};
   for (const task of tasks) counts[task.status] = (counts[task.status] || 0) + 1;
-  const next = tasks.find((task) => task.status === 'in_progress')
-    || tasks.find((task) => task.status === 'pending');
+  const schedule = scheduleNext(plan);
+  const top = schedule.candidates[0];
   return {
     ok: true,
     tasks: tasks.length,
     counts,
-    next: next ? { id: next.id, title: next.title, status: next.status } : null,
+    gate: schedule.gate,
+    debt: schedule.debt,
+    next: top ? { id: top.id, title: top.title, status: top.status, reason: top.reason } : null,
     ids: tasks.map((task) => task.id),
   };
 }
 
 function toolEnhancePlan(args = {}) {
   const { root, session } = contextFor(args);
-  if (!Array.isArray(args.tasks)) return jsonResult(readPlan(root, session));
+  if (!Array.isArray(args.tasks)) {
+    const plan = readPlan(root, session);
+    return jsonResult({ ...plan, schedule: scheduleNext(plan) });
+  }
   const plan = writePlan(root, args.tasks, { replace: Boolean(args.replace) }, session);
   // A write acknowledges the change instead of echoing every task back: the
   // capsule already carries the plan, and the echo was the conductor's largest

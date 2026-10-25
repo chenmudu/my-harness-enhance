@@ -17,6 +17,7 @@ import {
   storePaths,
 } from './store.mjs';
 import { listArtifacts } from './artifacts.mjs';
+import { scheduleNext } from './attention.mjs';
 import { roleHintForAgent, workerMenu } from './capabilities.mjs';
 
 export const CONDUCTOR_POLICY = `[MY-HARNESS-ENHANCE CONDUCTOR]
@@ -155,9 +156,14 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
     .map((entry) => `- ${entry.handle} ${entry.kind}: ${entry.summary || entry.source || '(no summary)'}`)
     .join('\n');
 
-  const next = plan.tasks?.find((task) => task.status === 'in_progress')
-    || plan.tasks?.find((task) => task.status === 'pending')
-    || activeJobs[0];
+  const next = scheduleNext(plan);
+  const top = next.candidates[0] || (next.gate === 'open' ? activeJobs[0] : null);
+  // Nothing ready but something blocked: the next action is to unblock it, and
+  // the line has to name the blocker rather than go blank.
+  const blockedTop = top ? null : (next.blocked || [])[0];
+  const blockedTask = blockedTop
+    ? (plan.tasks || []).find((task) => task.id === blockedTop.id)
+    : null;
 
   const checkLine = lastCheck
     ? `${lastCheck.ok ? 'ok' : 'FAIL'} checked=${(lastCheck.checked || []).join(',') || '(none)'} blockers=${lastCheck.summary?.blockers ?? '?'} warnings=${lastCheck.summary?.warnings ?? '?'}${lastCheck.worktree ? ` worktree=${lastCheck.worktree}` : ''}${pendingLand ? ' LAND REQUIRED' : ''}`
@@ -178,7 +184,11 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
     },
     {
       title: 'NEXT',
-      body: next ? clip(nextLine(next), 400) : '',
+      body: top
+        ? clip(nextLine(top), 400)
+        : blockedTask
+          ? clip(nextLine({ ...blockedTask, blockers: blockedTop.by }), 400)
+          : (next.gate === 'drain' ? clip(`drain first: ${next.reason}`, 400) : ''),
       pinned: true,
     },
     { title: 'LAST CHECK', body: checkLine, pinned: true },

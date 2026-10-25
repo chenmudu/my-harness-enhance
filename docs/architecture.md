@@ -275,6 +275,15 @@ inject the whole policy and capsule, while a normal turn receives a short
 anchor plus only the sections whose content changed (measured on a 14-task
 plan: 1,358 tokens full, 73 unchanged, 153 after one task moved).
 
+### 3.2 Frontier and schedule
+
+The capsule's NEXT line is computed, not guessed: a task is ready when every
+dependency is completed and it declares no blockers. The scheduler ranks the
+ready set by continuing an in-progress task first, then the stale one, then
+priority, then how many tasks the choice unblocks. When blocked plus stale
+reaches five open loops, the gate closes (`drain first`) and no new work is
+proposed; NEXT names what to unblock instead.
+
 ## 4. Hooks (Qoder adapter)
 
 | Event | Role |
