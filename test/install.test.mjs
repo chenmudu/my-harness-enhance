@@ -250,7 +250,7 @@ test('uninstall removes our hooks, MCP, and agents but keeps official/user agent
   assert.equal(fs.existsSync(path.join(configDir, 'agents', 'env-runner.md')), true);
   assert.equal(fs.existsSync(path.join(configDir, 'agents', 'reasoner.md')), true);
   assert.equal(
-    Object.values(readRegistry().projects).some((project) => project.projectRoot === root),
+    Object.values(readRegistry().projects).some((project) => project.projectRoot === canonicalPath(root)),
     false,
   );
 });

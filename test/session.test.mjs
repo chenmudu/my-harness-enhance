@@ -240,7 +240,7 @@ test('hook SessionStart shards state, records the host session, and marks the ca
   assert.ok(fs.existsSync(storePaths(root).goal), 'legacy state is kept');
   const registry = JSON.parse(fs.readFileSync(storePaths(root).sessions, 'utf8'));
   assert.equal(registry.sessions['Host-Session-1'].host_pid, process.pid);
-  assert.equal(registry.sessions['Host-Session-1'].cwd, root);
+  assert.equal(registry.sessions['Host-Session-1'].cwd, canonicalPath(root));
   assert.equal(registry.sessions['Host-Session-1'].created_at.length > 0, true);
 });
 
