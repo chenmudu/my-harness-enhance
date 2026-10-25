@@ -36,6 +36,7 @@ import {
   writeSession,
 } from '../../../core/store.mjs';
 import { diffWorktree } from '../../../core/worktree.mjs';
+import { canonicalPath } from '../../../core/state-root.mjs';
 import {
   agentTypeOf,
   conductorDenyReason,
@@ -158,7 +159,7 @@ async function onSessionStart(payload, root, config) {
       model: modelOf(payload),
       source,
       host_pid: process.ppid,
-      cwd: String(payload.cwd || process.cwd()),
+      cwd: canonicalPath(String(payload.cwd || process.cwd())),
     });
   }
   log(root, { event: EVENT, role: 'conductor', model: modelOf(payload) }, config);
