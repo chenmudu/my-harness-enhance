@@ -152,7 +152,7 @@ conductor 只看到这些工具；已有的 MCP/connectors 仍然是 worker 的�
 
 ## 验证
 
-参见 [INSTALL.md](../INSTALL.md) 第 6 节和 [validation.md](validation.md)。
+参见 [INSTALL.md](../INSTALL.md) 第 6 节。
 
 真实会话检查清单：在该项目里新开会话（不做任何选择）；
 conductor 应当只调用 `Agent`/`enhance_*`；worker 应当是上文列出的原生

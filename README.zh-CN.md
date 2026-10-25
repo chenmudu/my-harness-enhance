@@ -64,7 +64,7 @@
 - [docs/retention.md](docs/retention.md) — 保留期限与垃圾回收。
 - [overlays/README.md](overlays/README.md) — 个人 agent overlay 与安全安装/卸载。
 - [docs/roadmap.md](docs/roadmap.md) — adapter 与控制面路线图。
-- [docs/validation.md](docs/validation.md) — 本机验证记录。
+- 运行记录留在本机 `docs/others/`；它们是证据，不是文档。
 
 ## License
 

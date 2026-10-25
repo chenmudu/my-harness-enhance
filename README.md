@@ -64,7 +64,7 @@ everything in one long session.
 - [docs/retention.md](docs/retention.md) — retention limits and garbage collection.
 - [overlays/README.md](overlays/README.md) — personal agent overlay and safe install/uninstall.
 - [docs/roadmap.md](docs/roadmap.md) — adapter and control-plane roadmap.
-- [docs/validation.md](docs/validation.md) — local validation record.
+- Run records stay local under `docs/others/`; they are evidence, not documentation.
 
 ## License
 

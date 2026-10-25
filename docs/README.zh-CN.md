@@ -16,14 +16,13 @@
 | [metrics.md](metrics.md) | 度量什么、数字怎么读 | 度量 |
 | [retention.md](retention.md) | 保留期限与垃圾回收 | 状态生命周期 |
 | [roadmap.md](roadmap.md) | 计划中的工作 | 计划，不是当前行为 |
-| [validation.md](validation.md) | 本地验证记录 | 历史证据 |
 | [../overlays/README.md](../overlays/README.md) | 个人 agent overlay | overlay 安装 |
 
 ## 约定
 
 - 英文是默认版本；`docs/` 下的页面、两个根页面以及 `overlays/README.md` 都有 `.zh-CN.md` 译本，第 3 行回链。若有出入，以英文页为准。
 - 围栏内的代码、命令、JSON 和标识符在两版中逐字一致，不翻译。
-- 每个页面描述当前 commit；`validation.md` 是带日期的记录，不是规范。
+- 每个页面描述当前 commit；本机运行记录不是规范。
 - 个人笔记在 `docs/others/`，被 gitignore；它们不是仓库文档。
 - 行尾由 `.gitattributes` 固定为 LF；只有文件确实需要 CRLF 时才加按路径的例外。
 

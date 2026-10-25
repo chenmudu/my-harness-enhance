@@ -152,7 +152,7 @@ session-level; decisions, artifacts, metrics, and `sessions.json` are shared.
 
 ## Validation
 
-See [INSTALL.md](../INSTALL.md) section 6 and [validation.md](validation.md).
+See [INSTALL.md](../INSTALL.md) section 6.
 
 Real-session checklist: start a new session in the project (no selection); the
 conductor should only call `Agent`/`enhance_*`; workers should be the native
