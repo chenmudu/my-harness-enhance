@@ -53,7 +53,7 @@ everything in one long session.
 
 ## Status
 
-- **276/276 tests pass (Windows)**; macOS and Linux are not covered by CI yet.
+- **327/327 tests pass (Windows)**; a CI matrix runs the suite on macOS and Linux, but those platforms have not been run by hand yet.
 - Qoder validated end-to-end for read-only, write, and verification sessions; two
   concurrent sessions in one workspace keep separate state shards.
 - ZCode adapter implemented in project and global modes; `reason` uses read-only

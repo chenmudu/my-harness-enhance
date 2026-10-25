@@ -53,7 +53,7 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
 
 ## 状态
 
-- **276/276 测试通过（Windows）**；macOS 与 Linux 还没有 CI 覆盖。
+- **327/327 测试通过（Windows）**；CI 已在 macOS 与 Linux 上跑这套测试，但这两个平台还没有人工跑过。
 - Qoder 已在只读、写、验证会话上端到端验证；
   同一 workspace 下的两个并发会话各自持有独立的状态分片。
 - ZCode adapter 已实现项目级和全局模式；

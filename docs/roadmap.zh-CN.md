@@ -26,7 +26,7 @@ v0.4 是证据和周边工具。
 - 保留期限与垃圾回收：`mhe gc` 默认只出计划；metrics 与 logs 30 天 +
   5 MiB，artifacts 30 天并有 7 天宽限，decisions 180 天（默认关闭），
   worktrees 7 天。
-- 276 个测试；demo；基准测试；带 1 个 fallback agent 的 Qoder 安装；
+- 327 个测试；demo；基准测试；带 1 个 fallback agent 的 Qoder 安装；
   已安装环境的 hook 模拟；两个真实会话加一次双会话 run。
 - 一个 conductor + 原生 worker；worker 都是叶子节点（禁止 Agent/Task），所以
   不存在静默的嵌套扇出。
