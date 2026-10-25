@@ -253,10 +253,151 @@ node bin/mhe.mjs install qoder --global
 
 ## 8. 仍待验证
 
-- 长周期任务与 `PreCompact` 后的状态保真。
 - Qoder context 面板的细分分类（实机快照里 detail 为空）。
 - 更大负载下免费 `qfmodel` 的限流/质量。
 - 当 conductor model 为 qwen 3.5
   9b/7b 时与旧 `bash-delegate` hook 的交互（会打印告警；改用非 9B model 或移除旧 hook）。
 - ZCode adapter 与 macOS/Linux 实机运行。
 - 仓库现在已有 git 历史；2026-10-19 之前的条目早于它。
+
+## 9. 长周期 A/B（2026-10-25）
+
+runner 以 headless 方式驱动 Qoder CLI：每个 run 15 turns，
+每个 arm 跑两个 repeat，模型固定不变。
+
+```bash
+node bin/mhe.mjs ab \
+  --baseline-config ~/.mhe-test/qoder-baseline \
+  --treatment-config ~/.mhe-test/qoder-treatment \
+  --treatment-home ~/.mhe-test/state-treatment \
+  --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash \
+  --out ~/.mhe-test/ab-results/long-01
+```
+
+| arm | runs | turns | cli failures | final tests | ctx delta avg | ctx last avg | minutes | denials |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 2 | 30 | 0 | 2/2 | 0.1922 | 0.2998 | 19.9 | 0 |
+| treatment | 2 | 30 | 1 | 2/2 | 0.4801 | 0.6189 | 47.7 | 15 |
+
+逐个 run：
+
+| run | turns | final tests | context first -> last | wall | denials |
+| --- | --- | ---: | --- | ---: | --- |
+| baseline-r1 | 15/15 | 46 | 0.1077 -> 0.2982 | 608s | 0 |
+| treatment-r1 | 15/15 | 3 | 0.1391 -> 0.8213 | 914s | 5（1 allowlist，4 dispatch） |
+| treatment-r2 | 14/15 | 57 | 0.1385 -> 0.4164（max 0.7886） | 1950s | 10（7 dispatch，3 verification） |
+| baseline-r2 | 15/15 | 45 | 0.1075 -> 0.3013 | 589s | 0 |
+
+怎么读这组数：两个 arm 最终都是绿的测试套件，
+也就是说这层没有把任务搞坏。但代价更高：墙钟时间是 2.4 倍，
+context 增长是 2.5 倍，还多出
+15 次 baseline 从未有过的 hook 拒绝。treatment-r1 里这道门把 run 压到
+只剩 3 条测试（对照约 46 条），因为每次会写代码的派发都被拒了；
+treatment-r2 追平到 57 条测试，但为此花了 1950s、1 次 CLI 失败
+和 1 次 compaction。
+
+原因就写在拒绝计数里：treatment-r2 直到第 14/15 步才写出
+`profile: "code"` 的 brief，于是 code 门只在最后才武装起来，
+更早的派发都因为会话档案还没声明而被拒。
+
+### 修复之后的复跑
+
+baseline arm 不加载这层，所以只重跑 treatment arm：
+
+```bash
+node bin/mhe.mjs ab \
+  --baseline-config ~/.mhe-test/qoder-baseline \
+  --treatment-config ~/.mhe-test/qoder-treatment \
+  --treatment-home ~/.mhe-test/state-treatment \
+  --arm treatment --turns 15 --repeats 1 --model Qwen3.8-Flash \
+  --out ~/.mhe-test/ab-results/treatment-fix-01
+```
+
+| run | turns | final tests | context first -> last | wall | denials |
+| --- | --- | ---: | --- | ---: | ---: |
+| treatment-r1 | 15/15 | 38 | 0.1282 -> 0.5149 | 3062s | 0 |
+
+死锁没有了：拒绝数是 0，档案在第 2 步那次会写代码的派发之前就声明好了，
+而不是拖到第 14 步；11 个 plan 任务落地，收尾时测试套件是绿的，
+回报上来的 7 个 worker envelope 也全部 valid。
+
+这轮还暴露了一件事：会派发 worker 的 turn 跑不完 runner 的五分钟单轮上限，
+15 轮里有 8 轮被砍在上限上，所以它们在统计里被记成了 CLI failure。
+会话跨过这些砍断继续往前走（plan 一直在推进），但被派出去的 worker
+有一半没来得及回报：14 个派出去了，回来 7 个。
+runner 现在把单轮超时和 CLI failure 分开计数，
+而不是笼统计成 CLI failure，
+这样统计里才分得清「跑得慢」和「跑挂了」；
+`~/.mhe-test/ab-results/treatment-fix-02` 那一轮
+用十五分钟的单轮上限把两个 arm 重跑。
+
+## 10. 派发死锁与它的两个修复
+
+上面那些拒绝来自两把互相独立的锁。
+
+**档案未声明。** 没有 brief 的会话等于还没声明自己的档案。
+这时派发会写代码的 worker 会被拒绝，因为这种 worker 会直接改共享
+checkout，而之后再切到 code 档案就会撞上脏 base，
+任何 worktree 都无法从它创建。只读 worker（`Explore`、investigator、
+planner、verifier）仍然可以派发。拒绝信息会直接给出出路，
+而不只是陈述事实：
+
+```
+declare the session profile before dispatching a worker that writes: call enhance_brief profile=code (with the ownership globs) first, then enhance_plan, enhance_worktree create task_id=<id>, and dispatch with the returned task_id/worktree prefix. A worker dispatched before the brief edits the shared checkout, which later blocks worktree creation. A non-code profile (general, docs, research, ops) also declares the profile and keeps this dispatch ungated.
+```
+
+**脏基线。** 即使档案已经声明，`enhance_worktree create` 仍会拒绝
+带未提交改动的基线，而脏基线没法分叉，于是会话被永久卡住。
+`carry_base=true` 就是出路：
+
+1. 未提交状态通过一个临时索引拍快照（`read-tree HEAD` + `add -A` +
+   `write-tree` + `commit-tree`），得到的是一个 commit 对象，
+   既不碰工作区，也不碰暂存区，更不碰引用命名空间。
+   快照里既有已跟踪的改动，也有未跟踪的文件。
+2. worktree 就建在那个快照上，所以 worker 从基线的真实内容出发，
+   而 worktree 自身是干净的。
+3. 基线保留自己的未提交状态。land 会把任务的工作成果叠加在其上，
+   失败的 land 会精确还原被改动的那些路径以及已暂存/未暂存的划分，
+   而携带之后基线又动过的情况会被拒绝（`worktree.base_changed`），
+   而不是覆盖更新的工作。
+
+写代码之前先在临时仓库里量过：拍快照后基线的 status 逐字节不变，
+补丁里只有 worker 自己的活儿，还原能精确复现 land 之前的状态，
+包括 `A  已暂存` 与 ` M 未暂存` 的区别以及那些未跟踪文件。
+
+两个修复在真实会话里都成立：上面那轮复跑的拒绝数是 0，
+档案在第一次会写代码的派发之前就声明好了，
+后面的任务走了 carry 路径，落在了保留自己未提交状态的基线上。
+
+有一条行为值得知道：`land` 默认不提交，
+所以基线会把落地的改动留成未暂存状态。
+于是下一个 worktree 是从脏基线出来的，还得再带一次 `carry_base=true`。
+
+## 11. 两个 adapter 共用一套策略核心
+
+Qoder 与 ZCode 两个 adapter 各自带了一份 conductor/worker 工具策略的
+私有副本，于是同一个 payload 在两个 harness 上可能被判成不同的结果。
+现在这份策略住在 `src/core/hook-policy.mjs`，而与 harness 无关的
+recall MCP server 也从 Qoder adapter 挪到了
+`src/mcp/recall-server.mjs`。
+
+`test/adapter-conformance.test.mjs` 断言两个 adapter 都导入这份共享核心、
+都不再定义那些私有副本，并且同一个 payload 在两边得到相同的决定与
+相同的理由。
+
+## 12. 保留期限与垃圾回收
+
+`mhe gc` 先出计划，再按需执行。在这台机器上计划收集不到任何东西：
+每个 artifact 要么被引用，要么还在自己的窗口内；state home 一共
+3.6 MB，分布在 10 个 project 上。窗口分别是：metrics 与 logs 30 天
+加 5 MiB，artifacts 30 天并有 7 天宽限，decisions 180 天（当前关闭），
+worktrees 7 天。
+
+## 13. 隔离检查（每次安装之后）
+
+- `~/.qoder-cn/settings.json`：2772 字节，没有 `hooks` 键，MCP server 是
+  `Hugging Face`、`GitHub`、`ComfyUI`、`rea`、`openviking`，没有 harness 条目。
+- `~/.qoder-cn/hooks/`：空。
+- `~/.zcode/hooks.json` 与 `~/.zcode/mcp.json`：0 处 harness 引用。
+- A/B 全程跑在 `~/.mhe-test/` 下的
+  `--config-dir` 副本里。

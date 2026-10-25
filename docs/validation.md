@@ -253,10 +253,151 @@ Two review claims were narrowed:
 
 ## 8. Remaining validation
 
-- Long-horizon tasks and `PreCompact` state fidelity.
 - Qoder context-panel detailed categories (the live snapshot had empty details).
 - Free `qfmodel` rate limits/quality under larger workloads.
 - Old `bash-delegate` hook interaction when the conductor model is qwen 3.5
   9b/7b (warning is printed; use a non-9B model or remove the old hook).
 - ZCode adapter and macOS/Linux real-machine runs.
 - The repository now has git history; entries before 2026-10-19 predate it.
+
+## 9. Long-horizon A/B (2026-10-25)
+
+The runner drives the Qoder CLI headless: 15 turns per run, two repeats per
+arm, one fixed model.
+
+```bash
+node bin/mhe.mjs ab \
+  --baseline-config ~/.mhe-test/qoder-baseline \
+  --treatment-config ~/.mhe-test/qoder-treatment \
+  --treatment-home ~/.mhe-test/state-treatment \
+  --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash \
+  --out ~/.mhe-test/ab-results/long-01
+```
+
+| arm | runs | turns | cli failures | final tests | ctx delta avg | ctx last avg | minutes | denials |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 2 | 30 | 0 | 2/2 | 0.1922 | 0.2998 | 19.9 | 0 |
+| treatment | 2 | 30 | 1 | 2/2 | 0.4801 | 0.6189 | 47.7 | 15 |
+
+Per run:
+
+| run | turns | final tests | context first -> last | wall | denials |
+| --- | --- | ---: | --- | ---: | --- |
+| baseline-r1 | 15/15 | 46 | 0.1077 -> 0.2982 | 608s | 0 |
+| treatment-r1 | 15/15 | 3 | 0.1391 -> 0.8213 | 914s | 5 (1 allowlist, 4 dispatch) |
+| treatment-r2 | 14/15 | 57 | 0.1385 -> 0.4164 (max 0.7886) | 1950s | 10 (7 dispatch, 3 verification) |
+| baseline-r2 | 15/15 | 45 | 0.1075 -> 0.3013 | 589s | 0 |
+
+Read: both arms end with a green test suite, so the layer does not break the
+task. It does cost more to get there: 2.4x the wall time, 2.5x the context
+growth, and 15 hook denials the baseline never produced. In treatment-r1 the
+gate cut the run down to 3 of the ~46 tests, because every write-capable
+dispatch was refused; treatment-r2 caught up with 57 tests but needed 1950s,
+one CLI failure and one compaction to do it.
+
+The cause is visible in the denial counters: treatment-r2 wrote its
+`profile: "code"` brief at step 14 of 15, so the code gate armed only at the
+very end and the earlier dispatches were refused for a session whose profile
+was still undeclared.
+
+### The re-run after the two fixes
+
+The baseline arm loads no harness, so only the treatment arm was repeated:
+
+```bash
+node bin/mhe.mjs ab \
+  --baseline-config ~/.mhe-test/qoder-baseline \
+  --treatment-config ~/.mhe-test/qoder-treatment \
+  --treatment-home ~/.mhe-test/state-treatment \
+  --arm treatment --turns 15 --repeats 1 --model Qwen3.8-Flash \
+  --out ~/.mhe-test/ab-results/treatment-fix-01
+```
+
+| run | turns | final tests | context first -> last | wall | denials |
+| --- | --- | ---: | --- | ---: | ---: |
+| treatment-r1 | 15/15 | 38 | 0.1282 -> 0.5149 | 3062s | 0 |
+
+The deadlock is gone: zero refusals, the profile was declared before the first
+write-capable dispatch at step 2 instead of step 14, and 11 plan tasks landed
+with a green suite at the end.
+
+The run also showed that a turn which dispatches a worker does not finish
+inside the runner's five-minute per-turn limit: 8 of the 15 turns were cut at
+that limit, which is why they are reported as CLI failures. The session kept
+working across the cuts (the plan advanced past them), but half of the
+dispatched workers never reported back. The runner now counts a turn timeout
+separately from a CLI failure, and a further run repeats both arms with a
+fifteen-minute per-turn limit, so that "slow" and "broken" stop being
+reported as the same number.
+
+## 10. The dispatch deadlock and its two fixes
+
+Two independent locks produced those refusals.
+
+**Undeclared profile.** A session without a brief has not declared its
+profile. Dispatching a write-capable worker is refused, because such a worker
+edits the shared checkout, and a later switch to the code profile then finds
+a dirty base that no worktree can be created from. Read-only workers
+(`Explore`, investigator, planner, verifier) stay dispatchable. The refusal
+names the way out instead of only the fact:
+
+```
+declare the session profile before dispatching a worker that writes: call enhance_brief profile=code (with the ownership globs) first, then enhance_plan, enhance_worktree create task_id=<id>, and dispatch with the returned task_id/worktree prefix. A worker dispatched before the brief edits the shared checkout, which later blocks worktree creation. A non-code profile (general, docs, research, ops) also declares the profile and keeps this dispatch ungated.
+```
+
+**Dirty base.** Even with the profile declared, `enhance_worktree create`
+refused a base with uncommitted work, and a dirty base cannot be branched
+from, so the session was stuck for good. `carry_base=true` is the way out:
+
+1. The uncommitted state is snapshotted through a temporary index
+   (`read-tree HEAD` + `add -A` + `write-tree` + `commit-tree`) into a commit
+   object that touches neither the working tree, nor the index, nor the ref
+   namespace. The snapshot holds the tracked changes and the untracked files.
+2. The worktree is created at that snapshot, so the worker starts from the
+   base's real content and the worktree itself is clean.
+3. The base keeps its own uncommitted state. The land adds the task's work on
+   top of it, a failed land restores the patched paths and the staged/unstaged
+   split exactly, and a base that moved on is refused
+   (`worktree.base_changed`) instead of overwritten.
+
+Measured on scratch repositories before the code was written: the snapshot
+leaves the base status byte-identical, the patch carries only the worker's
+work, and the restore reproduces the pre-land status exactly, including
+`A  staged` versus ` M unstaged` and the untracked files.
+
+Both fixes hold in a real session: the re-run above had zero refusals, the
+profile was declared before the first write-capable dispatch, and the later
+tasks used the carry path and landed on a base that kept its own uncommitted
+state.
+
+One behaviour worth knowing: `land` does not commit by default, so the base
+keeps the landed changes as unstaged work. The next worktree therefore starts
+from a dirty base and needs `carry_base=true` again.
+
+## 11. One policy core for both adapters
+
+The Qoder and ZCode adapters each carried a private copy of the conductor and
+worker tool policy, so the same payload could be judged differently by each
+harness. That policy now lives in `src/core/hook-policy.mjs`, and the
+harness-neutral recall MCP server moved out of the Qoder adapter into
+`src/mcp/recall-server.mjs`.
+
+`test/adapter-conformance.test.mjs` asserts that both adapters import the
+shared core, that neither defines the private copies any more, and that the
+same payload reaches the same decision and the same reason in both.
+
+## 12. Retention and garbage collection
+
+`mhe gc` plans and optionally applies. On this machine the plan collected
+nothing: every artifact is referenced or inside its window, and the state
+home holds 3.6 MB across 10 projects. The windows are metrics and logs at 30
+days and 5 MiB, artifacts at 30 days with a 7-day grace, decisions at 180 days
+(disabled), and worktrees at 7 days.
+
+## 13. Isolation check (after every install)
+
+- `~/.qoder-cn/settings.json`: 2772 bytes, no `hooks` key, MCP servers
+  `Hugging Face`, `GitHub`, `ComfyUI`, `rea`, `openviking`, no harness entry.
+- `~/.qoder-cn/hooks/`: empty.
+- `~/.zcode/hooks.json` and `~/.zcode/mcp.json`: zero harness references.
+- The A/B ran entirely on `--config-dir` copies under `~/.mhe-test/`.
