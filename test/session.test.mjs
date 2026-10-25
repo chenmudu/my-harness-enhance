@@ -30,6 +30,7 @@ import {
   writePlan,
 } from '../src/core/store.mjs';
 import { buildCapsule, writeCapsule } from '../src/core/capsule.mjs';
+import { canonicalPath } from '../src/core/state-root.mjs';
 import { buildBrief } from '../src/core/brief.mjs';
 import { summarizeMetrics } from '../src/core/metrics.mjs';
 import { putArtifact } from '../src/core/artifacts.mjs';
@@ -398,7 +399,7 @@ test('worktrees live under the session key and legacy worktrees stay readable', 
   assert.equal(created.ok, true, created.blocker);
   assert.equal(
     created.path,
-    path.join(projectWorktreesDir(root, session), 'T1'),
+    canonicalPath(path.join(projectWorktreesDir(root, session), 'T1')),
   );
   assert.ok(created.path.includes(`${path.sep}${sessionKey(session)}${path.sep}`));
   assert.ok(readWorktrees(root, session).worktrees.T1);
@@ -408,7 +409,7 @@ test('worktrees live under the session key and legacy worktrees stay readable', 
 
   const legacy = createWorktree(root, 'T2');
   assert.equal(legacy.ok, true, legacy.blocker);
-  assert.equal(legacy.path, path.join(projectWorktreesDir(root), 'T2'));
+  assert.equal(legacy.path, canonicalPath(path.join(projectWorktreesDir(root), 'T2')));
   // The session registry is copied from legacy by adoption; both paths resolve.
   const fallback = storePaths(root, 'Session_B');
   fs.mkdirSync(fallback.sessionDir, { recursive: true });

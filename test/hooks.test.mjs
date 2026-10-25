@@ -480,7 +480,7 @@ test('conductor cannot dispatch a verification worker before the deterministic c
 test('harness MCP project arguments are locked to the session root', () => {
   const root = setupRoot();
   const sessionRoot = canonicalPath(root);
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-outside-')));
+  const outside = canonicalPath(fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-outside-')));
 
   const denied = runHook(root, 'PreToolUse', {
     model: 'qfmodel',

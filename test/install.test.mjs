@@ -162,7 +162,7 @@ test('auto install reuses native agents and never writes into the repo', () => {
   assert.ok(stateDir.startsWith(enhanceHome()));
   assert.equal(fs.existsSync(path.join(root, '.router')), false);
   const registry = readRegistry();
-  assert.ok(Object.values(registry.projects).some((project) => project.projectRoot === root));
+  assert.ok(Object.values(registry.projects).some((project) => project.projectRoot === canonicalPath(root)));
 
   const doctor = doctorQoder({ root, configDir });
   assert.equal(doctor.ok, true, JSON.stringify(doctor.checks, null, 2));

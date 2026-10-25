@@ -31,10 +31,22 @@ function writeFile(file, content, ageDays = 0) {
 }
 
 function setupHome() {
-  const home = tempDir('mhe-gc-home-');
+  // The state home normally lives under the OS home, which is what makes the
+  // `~/` display possible. Point the OS home at the sandbox so the tildified
+  // report is testable on every platform, not just where tmpdir sits under it.
+  const sandbox = tempDir('mhe-gc-sandbox-');
+  const fakeHome = path.join(sandbox, 'home');
+  fs.mkdirSync(fakeHome);
+  const home = path.join(fakeHome, '.my-harness-enhance');
   const workspace = tempDir('mhe-gc-workspace-');
-  const previous = process.env.MY_HARNESS_ENHANCE_HOME;
+  const previous = {
+    MY_HARNESS_ENHANCE_HOME: process.env.MY_HARNESS_ENHANCE_HOME,
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+  };
   process.env.MY_HARNESS_ENHANCE_HOME = home;
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
   const record = registerProject(workspace);
   const stateDir = record.stateDir;
   const session = 'sessionone';
@@ -46,8 +58,10 @@ function setupHome() {
     key,
     session,
     restore() {
-      if (previous === undefined) delete process.env.MY_HARNESS_ENHANCE_HOME;
-      else process.env.MY_HARNESS_ENHANCE_HOME = previous;
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     },
   };
 }
