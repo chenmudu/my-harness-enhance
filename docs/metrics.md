@@ -152,6 +152,16 @@ at `<config-dir>/projects/<workspace-key>/<session>.jsonl` and sum its entries b
 type (`user` tool results, `attachment` hook injections, `assistant` text and
 thinking).
 
+Behavior labels come from the same transcript. They cover the main session
+only: the transcript records the conductor's tool calls, not the workers'.
+
+| label | definition |
+| --- | --- |
+| next-action hit | the first action of a turn names a path the prompt expects |
+| wrong-task write | a write lands outside the expected paths for that turn |
+| re-read | a read of a file the same session already read |
+| recovery | a turn after a failed one still starts on an expected path |
+
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
   --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash

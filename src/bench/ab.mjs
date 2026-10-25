@@ -8,6 +8,7 @@ import { canonicalPath, projectKey } from '../core/state-root.mjs';
 import { sessionKey } from '../core/store.mjs';
 import { summarizeMetrics } from '../core/metrics.mjs';
 import { buildReviewFixture, checkReviewAnswers, reviewPrompts } from './review-fixture.mjs';
+import { readTranscript, summarizeBehavior, transcriptPath } from './behavior.mjs';
 
 export const DEFAULT_MODEL = 'Qwen3.8-Flash';
 export const DEFAULT_TURNS = 15;
@@ -607,6 +608,7 @@ export function summarizeAb(runs, meta = {}) {
       context_last: [],
       duration_ms: 0,
       denials: 0,
+      behavior: null,
     };
     bucket.runs += 1;
     bucket.turns += run.summary.turns;
@@ -617,6 +619,12 @@ export function summarizeAb(runs, meta = {}) {
     bucket.context_last.push(run.summary.context.last);
     bucket.duration_ms += run.summary.duration_ms;
     bucket.denials += Object.values(run.summary.hooks?.denials || {}).reduce((total, value) => total + value, 0);
+    if (run.behavior?.totals) {
+      bucket.behavior = bucket.behavior || {};
+      for (const [name, value] of Object.entries(run.behavior.totals)) {
+        bucket.behavior[name] = (bucket.behavior[name] || 0) + value;
+      }
+    }
     byArm[run.arm] = bucket;
   }
   const arms = {};
@@ -633,6 +641,7 @@ export function summarizeAb(runs, meta = {}) {
       },
       duration_ms: bucket.duration_ms,
       denials: bucket.denials,
+      behavior: bucket.behavior,
     };
   }
   return {
@@ -671,6 +680,18 @@ export function renderSummaryMarkdown(summary) {
   lines.push('Context values are the model-reported `context_usage_ratio` after each turn.');
   lines.push('Denials are hook-reported conductor or worker tool denials.');
   lines.push('Timeouts are turns the runner cut at the per-turn limit; they are counted in cli failures too.');
+  const behaviorRows = Object.entries(summary.arms).filter(([, value]) => value.behavior);
+  if (behaviorRows.length) {
+    lines.push('');
+    lines.push('Behavior labels come from the session transcript and cover the main session only.');
+    lines.push('');
+    lines.push('| arm | labeled turns | next-action hit | wrong-task writes | re-reads | failed turns | recoveries |');
+    lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
+    for (const [arm, value] of behaviorRows) {
+      const b = value.behavior;
+      lines.push(`| ${arm} | ${b.turns || 0} | ${b.next_action_hit || 0} | ${b.wrong_task_actions || 0} | ${b.re_reads || 0} | ${b.failed_turns || 0} | ${b.recoveries || 0} |`);
+    }
+  }
   return `${lines.join('\n')}\n`;
 }
 
@@ -766,6 +787,14 @@ export async function runAb(options = {}) {
         runSession,
         check: runCheck,
       });
+      run.behavior = summarizeBehavior(
+        readTranscript(transcriptPath(
+          arm === 'treatment' ? options.treatmentConfig : options.baselineConfig,
+          workspace,
+          run.session_id,
+        )),
+        { fixtureKind, turns },
+      );
       atomicWrite(
         path.join(outDir, 'runs', `${arm}-r${repeat + 1}`, 'result.json'),
         `${JSON.stringify(run, null, 2)}\n`,

@@ -152,6 +152,16 @@ turn 的边界是一个 `result` 事件，
 按条目类型累加（`user` 工具结果、`attachment` hook 注入、
 `assistant` 文本与思考）。
 
+行为标签从同一份 transcript 算出来，且只覆盖主会话：
+transcript 里记录的是 conductor 的工具调用，不含 worker 的。
+
+| 标签 | 定义 |
+| --- | --- |
+| next-action 命中 | 一轮的第一个动作指向 prompt 期望的路径 |
+| wrong-task 写入 | 写操作落在该轮期望路径之外 |
+| re-read | 同一会话里重复读同一个文件 |
+| recovery | 失败轮之后的一轮仍然从期望路径开始 |
+
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
   --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash
