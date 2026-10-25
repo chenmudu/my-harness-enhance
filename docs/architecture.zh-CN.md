@@ -248,9 +248,12 @@ conductor 会话和被映射的原生 worker 创建，
   ACTIVE JOBS、WORKTREES、RECENT DECISIONS、ARTIFACTS。
 - **有界输入：** PLAN 30 条任务、ACTIVE JOBS 12 条、WORKTREES 10 条、
   RECENT DECISIONS 8 条、ARTIFACTS 10 条。
+- **可见性：** 头部写明降级档位（`mode=full`、`compact` 或 `core-only`），
+  任何只显示一部分内容的段落都会标 `(shown X of Y)`，
+  不会静默丢内容。
 - **降级：** PLAN 在预算内二分截断并写 `(N more tasks omitted)`；跳过的段
   在 `OMITTED` 里列名；
-  最后的硬上限追加 `…[capsule truncated]`。
+  最后的硬上限会把自己那段标记也算进预算，所以 capsule 不会超预算。
 
 固定段先写入，因此即使其余内容放不下，
 conductor 的工作集仍在。

@@ -74,6 +74,47 @@ test('worker contract is leaf-only and has no fake depth knobs', () => {
   assert.doesNotMatch(contract, /depth: \d+ \/ max/);
 });
 
+test('a roomy capsule reports mode=full and shows every section', () => {
+  const root = makeRoot();
+  const capsule = buildCapsule(root, { maxTokens: 1800 });
+  assert.match(capsule, /CAPSULE v1 mode=full/);
+  assert.doesNotMatch(capsule, /shown \d+ of \d+/);
+});
+
+test('a capped section says how much of itself it shows', () => {
+  const root = makeRoot();
+  writePlan(
+    root,
+    Array.from({ length: 40 }, (_, i) => ({
+      id: `t${i + 1}`,
+      title: `task ${i + 1}`,
+      status: i === 0 ? 'in_progress' : 'pending',
+    })),
+    { replace: true },
+  );
+  const capsule = buildCapsule(root, { maxTokens: 4000 });
+  assert.match(capsule, /## PLAN \(shown 30 of 40\)/);
+  assert.match(capsule, /mode=compact/);
+});
+
+test('a tight budget degrades to core-only and says so', () => {
+  const root = makeRoot();
+  for (let i = 0; i < 12; i += 1) appendDecision(root, `decision ${i}`, 'r'.repeat(80));
+  const capsule = buildCapsule(root, { maxTokens: 40 });
+  assert.match(capsule, /mode=core-only/);
+  assert.ok(estimateTokens(capsule) <= 40, `tokens ${estimateTokens(capsule)}`);
+});
+
+test('truncation never exceeds the hard cap, marker included', () => {
+  const root = makeRoot();
+  const filler = 'f'.repeat(4000);
+  writeGoal(root, { text: filler });
+  for (const budget of [30, 80, 200, 300]) {
+    const capsule = buildCapsule(root, { maxTokens: budget });
+    assert.ok(estimateTokens(capsule) <= budget, `budget ${budget} -> ${estimateTokens(capsule)}`);
+  }
+});
+
 test('capsule keeps NEXT and LAST CHECK when the state is over budget', () => {
   const root = makeRoot();
   const filler = '处理模块的实现与验证并补齐缺失的测试保证与既有接口兼容';

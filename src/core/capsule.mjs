@@ -79,19 +79,19 @@ function clip(text, maxChars) {
 export function fitToTokens(text, maxTokens) {
   if (maxTokens <= 0) return '';
   if (estimateTokens(text) <= maxTokens) return text;
+  const suffix = '\n…[capsule truncated]';
+  // The marker is part of the output, so it has to fit inside the budget too;
+  // otherwise truncation silently overshoots the hard cap it is enforcing.
+  const room = maxTokens - estimateTokens(suffix);
+  if (room <= 0) return suffix.trim();
   let low = 0;
   let high = text.length;
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (estimateTokens(text.slice(0, mid)) <= maxTokens) low = mid;
+    if (estimateTokens(text.slice(0, mid)) <= room) low = mid;
     else high = mid - 1;
   }
-  return `${text.slice(0, safeEnd(text, low))}\n…[capsule truncated]`;
-}
-
-function section(title, body) {
-  if (!body || !String(body).trim()) return '';
-  return `## ${title}\n${String(body).trim()}\n`;
+  return `${text.slice(0, safeEnd(text, low))}${suffix}`;
 }
 
 export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
@@ -106,12 +106,16 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
   const worktrees = Object.entries(readWorktrees(root, sessionId).worktrees || {});
   // Decisions and artifacts stay project-level by design: they are durable
   // evidence shared by every session in this workspace.
-  const decisions = readDecisions(root, 8);
-  const artifacts = listArtifacts(root, 10);
+  const decisionsAll = readDecisions(root, 50);
+  const decisions = decisionsAll.slice(-8);
+  const artifactsAll = listArtifacts(root, 50);
+  const artifacts = artifactsAll.slice(0, 10);
   const activeJobs = jobs.filter((job) =>
     ['running', 'queued', 'blocked'].includes(String(job.status)),
   );
 
+  const planTotal = (plan.tasks || []).length;
+  const planShown = Math.min(planTotal, 30);
   const planLines = (plan.tasks || [])
     .slice(0, 30)
     .map((task) => {
@@ -120,11 +124,13 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
     })
     .join('\n');
 
+  const jobShown = Math.min(activeJobs.length, 12);
   const jobLines = activeJobs
     .slice(0, 12)
     .map((job) => `- ${job.id} ${job.type || ''} ${job.status} since ${job.created_at || '?'}`)
     .join('\n');
 
+  const worktreeShown = Math.min(worktrees.length, 10);
   const worktreeLines = worktrees
     .slice(0, 10)
     .map(([id, entry]) => `- ${id}: ${entry.status || 'active'} ${entry.path || ''}`)
@@ -173,24 +179,65 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
     { title: 'CONSTRAINTS', body: goal.constraints?.map((item) => `- ${item}`).join('\n'), priority: 3 },
     { title: 'WORKERS', body: workerMenu(config.capabilities), priority: 4 },
     { title: 'BRIEF', body: briefForCapsule(brief), priority: 5 },
-    { title: 'PLAN', body: planLines, priority: 6 },
-    { title: 'ACTIVE JOBS', body: jobLines, priority: 7 },
-    { title: 'WORKTREES', body: worktreeLines, priority: 8 },
-    { title: 'RECENT DECISIONS', body: decisionLines, priority: 9 },
-    { title: 'ARTIFACTS', body: artifactLines, priority: 10 },
+    {
+      title: 'PLAN',
+      body: planLines,
+      priority: 6,
+      shown: planShown,
+      total: planTotal,
+    },
+    {
+      title: 'ACTIVE JOBS',
+      body: jobLines,
+      priority: 7,
+      shown: jobShown,
+      total: activeJobs.length,
+    },
+    {
+      title: 'WORKTREES',
+      body: worktreeLines,
+      priority: 8,
+      shown: worktreeShown,
+      total: worktrees.length,
+    },
+    {
+      title: 'RECENT DECISIONS',
+      body: decisionLines,
+      priority: 9,
+      shown: decisions.length,
+      total: decisionsAll.length,
+    },
+    {
+      title: 'ARTIFACTS',
+      body: artifactLines,
+      priority: 10,
+      shown: artifacts.length,
+      total: artifactsAll.length,
+    },
   ].filter((entry) => entry.body && String(entry.body).trim());
 
-  // Pinned sections are the conductor's minimum working set. Everything else
-  // is added by priority while it fits; omissions are named rather than silent.
-  let text = '[MY-HARNESS-ENHANCE CAPSULE v1]\n\n';
-  const add = (entry) => `${section(entry.title, entry.body)}\n`;
+  // Every section says how much of itself it shows; nothing is omitted
+  // silently. `mode` names the degradation level: full (everything fits),
+  // compact (some sections were cut or dropped), core-only (only the pinned
+  // working set fits).
+  const add = (entry) => {
+    const note = entry.total && entry.shown < entry.total
+      ? ` (shown ${entry.shown} of ${entry.total})`
+      : '';
+    return `## ${entry.title}${note}\n${String(entry.body).trim()}\n\n`;
+  };
+  let text = '';
   for (const entry of entries.filter((entry) => entry.pinned)) text += add(entry);
+  let included = 0;
+  let truncated = false;
   const omitted = [];
   for (const entry of entries
-    .filter((entry) => !entry.pinned)
+    .filter((item) => !item.pinned)
     .sort((a, b) => a.priority - b.priority)) {
+    if (entry.total && entry.shown < entry.total) truncated = true;
     if (estimateTokens(`${text}${add(entry)}`) <= budget) {
       text += add(entry);
+      included += 1;
       continue;
     }
     if (entry.title === 'PLAN') {
@@ -205,7 +252,14 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
       }
       if (low > 0) {
         const body = `${lines.slice(0, low).join('\n')}\n- … (${lines.length - low} more tasks omitted)`;
-        text += add({ title: entry.title, body });
+        text += add({
+          title: entry.title,
+          body,
+          shown: low,
+          total: entry.total || lines.length,
+        });
+        included += 1;
+        truncated = true;
         continue;
       }
     }
@@ -215,7 +269,10 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
     const note = add({ title: 'OMITTED', body: omitted.join(', ') });
     if (estimateTokens(`${text}${note}`) <= budget) text += note;
   }
-  return fitToTokens(text, budget);
+  const mode = omitted.length > 0 && included === 0
+    ? 'core-only'
+    : (truncated || omitted.length > 0 ? 'compact' : 'full');
+  return fitToTokens(`[MY-HARNESS-ENHANCE CAPSULE v1 mode=${mode}]\n\n${text}`, budget);
 }
 
 export function writeCapsule(root, { maxTokens = null, session = '' } = {}) {

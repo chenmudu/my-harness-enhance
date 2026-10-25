@@ -248,9 +248,12 @@ budget is `config.context.maxCapsuleTokens` (default 1800 tokens).
   ACTIVE JOBS, WORKTREES, RECENT DECISIONS, ARTIFACTS.
 - **Bounded inputs:** PLAN 30 tasks, ACTIVE JOBS 12, WORKTREES 10, RECENT
   DECISIONS 8, ARTIFACTS 10.
+- **Visibility:** the header names the degradation level (`mode=full`,
+  `compact`, or `core-only`), and every section that shows only part of its
+  content says `(shown X of Y)`. Nothing is dropped silently.
 - **Degradation:** PLAN is truncated inside the budget and appends
-  `(N more tasks omitted)`; skipped sections are named in `OMITTED`; a final
-  hard cap appends `…[capsule truncated]`.
+  `(N more tasks omitted)`; skipped sections are named in `OMITTED`; the final
+  hard cap counts its own marker, so the capsule never exceeds the budget.
 
 Pinned sections are inserted first, so the conductor keeps its working set even
 when the rest does not fit.
