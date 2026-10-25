@@ -136,19 +136,21 @@ grows with decisions and result summaries, not with execution details**.
 
 `mhe ab` runs one scripted multi-turn task twice: once against a plain Qoder
 config (baseline) and once against a config with the harness installed
-(treatment). Each turn is a separate CLI process that resumes the same session.
+(treatment). One CLI process per run receives every prompt as a `stream-json`
+user message and a turn boundary is a `result` event, so `SessionStart` fires
+once per run the way it does in a real session.
 
-That restart is not free and it is not like a real session: `SessionStart` fires
-once per process, so a 15-turn run fires it 15 times where a real session fires
-it once. Measured on a 15-turn run, the conductor policy plus capsule reached
-the transcript 29 times (60.6k tokens), and 29.1k of that was `SessionStart`
-copies that a real session would not pay. Treat `mhe ab` as a token-growth
-probe, not as a measurement of attention density.
+Runs recorded before this change started a new CLI process per turn. That fired
+`SessionStart` again for every turn and inflated the treatment side: on a
+15-turn run the conductor policy plus capsule reached the transcript 29 times
+(60.6k tokens), and 29.1k of that was restart overhead a real session never
+pays. Those numbers overstate injection cost; the runner no longer produces
+them.
 
 To attribute what actually enters the conductor, read the CLI session transcript
 at `<config-dir>/projects/<workspace-key>/<session>.jsonl` and sum its entries by
 type (`user` tool results, `attachment` hook injections, `assistant` text and
-thinking). That is how the numbers above were produced.
+thinking).
 
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
@@ -162,7 +164,10 @@ Rules the runner enforces:
 - the treatment state home is a separate `MY_HARNESS_ENHANCE_HOME`;
 - the model is pinned; `Auto` is rejected;
 - results are written outside the repository (default
-  `~/.mhe-test/ab-results/<stamp>`).
+  `~/.mhe-test/ab-results/<stamp>`);
+- a turn that returns `is_error` is recorded with the CLI's own error text; the
+  free `qfmodel` has a daily usage cap, so a long run can end with `error_code`
+  110 rather than a result.
 
 Per turn the runner records the model-reported `context_usage_ratio`, the CLI
 duration, the fixture test result, and the hook counters of the treatment arm.

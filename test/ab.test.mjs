@@ -7,12 +7,14 @@ import {
   assertIsolatedDir,
   configHasHarness,
   createFixture,
+  createSessionProcess,
   longHorizonPrompts,
   parseCliResult,
   parseTestCounts,
   prepareWorkspace,
   runAb,
   runFixtureCheck,
+  sessionInputLine,
   summarizeAb,
   summarizeTurns,
   turnEnv,
@@ -157,6 +159,69 @@ test('a turn the runner cut at its limit is counted as a timeout, not a CLI cras
   assert.equal(summary.arms.treatment.cli_failures, 2);
 });
 
+const FAKE_CLI = [
+  "let buf = '';",
+  "process.stdin.setEncoding('utf8');",
+  "process.stdin.on('data', (chunk) => {",
+  "  buf += chunk;",
+  "  let i;",
+  "  while ((i = buf.indexOf('\\n')) >= 0) {",
+  "    const line = buf.slice(0, i).trim();",
+  "    buf = buf.slice(i + 1);",
+  "    if (!line) continue;",
+  "    const text = JSON.parse(line).message.content[0].text;",
+  "    if (text === 'HANG') continue;",
+  "    process.stdout.write(JSON.stringify({",
+  "      type: 'result', result: text, duration_ms: 1,",
+  "      session_id: 'fixed', context_usage_ratio: 0.1,",
+  "    }) + '\\n');",
+  "  }",
+  "});",
+  "process.stdin.on('end', () => process.exit(0));",
+].join('\n');
+
+function fakeSession() {
+  const dir = tempDir('mhe-ab-fakecli-');
+  const file = path.join(dir, 'cli.mjs');
+  fs.writeFileSync(file, FAKE_CLI, 'utf8');
+  return createSessionProcess({
+    command: process.execPath,
+    args: [file],
+    cwd: dir,
+    env: process.env,
+  });
+}
+
+test('a session input line is one user message in NDJSON', () => {
+  const line = sessionInputLine('do the thing');
+  assert.ok(line.endsWith('\n'));
+  const parsed = JSON.parse(line);
+  assert.equal(parsed.type, 'user');
+  assert.equal(parsed.message.role, 'user');
+  assert.equal(parsed.message.content[0].text, 'do the thing');
+});
+
+test('one session process turns N messages into N results', async () => {
+  const session = fakeSession();
+  const first = await session.send('one', 5000);
+  const second = await session.send('two', 5000);
+  assert.equal(first.event.result, 'one');
+  assert.equal(second.event.result, 'two');
+  assert.equal(first.event.session_id, second.event.session_id);
+  assert.equal(first.timedOut, false);
+  session.close();
+});
+
+test('a turn that stops answering is a timeout, not a silent hang', async () => {
+  const session = fakeSession();
+  const first = await session.send('one', 5000);
+  assert.equal(first.event.result, 'one');
+  const stuck = await session.send('HANG', 150);
+  assert.equal(stuck.timedOut, true);
+  assert.equal(stuck.event, null);
+  assert.match(stuck.error, /150ms/);
+});
+
 test('ab run writes a summary and refuses a non-empty output dir', async () => {
   const outDir = path.join(tempDir('mhe-ab-out-'), 'run');
   const baselineConfig = tempDir('mhe-ab-baseline-');
@@ -168,24 +233,32 @@ test('ab run writes a summary and refuses a non-empty output dir', async () => {
     model: 'Qwen3.8-Flash',
     baselineConfig,
     outDir,
-    runTurn: async ({ prompt, sessionId, resume }) => {
-      calls.push({ prompt, resume });
+    runSession: ({ sessionId }) => {
+      const sent = [];
       return {
-        ok: true,
-        code: 0,
-        durationMs: 5,
-        timedOut: false,
-        stdout: '',
-        stderr: '',
-        payload: { type: 'result', result: 'ok', context_usage_ratio: calls.length * 0.1 },
+        send: async (prompt) => {
+          sent.push(prompt);
+          return {
+            event: {
+              type: 'result',
+              result: 'ok',
+              duration_ms: 5,
+              context_usage_ratio: sent.length * 0.1,
+              session_id: sessionId,
+            },
+            timedOut: false,
+            error: '',
+          };
+        },
+        close: () => { calls.push({ closed: true, sent: sent.length, sessionId }); },
       };
     },
     check: async () => ({ ok: true, code: 0, passed: 2, failed: 0, test_files: 1, duration_ms: 3 }),
     log: () => {},
   });
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0].resume, false);
-  assert.equal(calls[1].resume, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].closed, true);
+  assert.equal(calls[0].sent, 2);
   assert.equal(result.summary.arms.baseline.runs, 1);
   assert.equal(result.summary.arms.baseline.turns, 2);
   assert.ok(fs.existsSync(path.join(outDir, 'summary.json')));
@@ -199,7 +272,10 @@ test('ab run writes a summary and refuses a non-empty output dir', async () => {
       model: 'Qwen3.8-Flash',
       baselineConfig,
       outDir,
-      runTurn: async () => ({ ok: true, code: 0, durationMs: 1, timedOut: false, stdout: '', stderr: '', payload: {} }),
+      runSession: () => ({
+        send: async () => ({ event: { type: 'result' }, timedOut: false, error: '' }),
+        close: () => {},
+      }),
       check: async () => ({ ok: true }),
       log: () => {},
     }),

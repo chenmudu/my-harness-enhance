@@ -317,37 +317,150 @@ export function readSessionMetricEntries(treatmentHome, workspace, sessionId) {
   return entries;
 }
 
-async function runCliTurn({
-  cli,
-  configDir,
-  workspace,
-  sessionId,
-  resume,
-  prompt,
-  model,
-  timeoutMs,
-  arm,
-  treatmentHome,
-}) {
-  const args = [
+export function sessionInputLine(prompt) {
+  return `${JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text: String(prompt ?? '') }] },
+  })}\n`;
+}
+
+function cliSessionArgs({ configDir, model, sessionId }) {
+  return [
     '--config-dir', configDir,
-    '--output-format', 'json',
+    '--input-format', 'stream-json',
+    '--output-format', 'stream-json',
+    '--print',
     '--model', model,
     '--permission-mode', 'bypass_permissions',
-    ...(resume ? ['-r', sessionId] : ['--session-id', sessionId]),
-    '-p', prompt,
+    '--session-id', sessionId,
   ];
-  const proc = await runProcess(cli, args, {
-    cwd: workspace,
-    env: turnEnv({ arm, sessionId, treatmentHome }),
-    timeoutMs,
+}
+
+/**
+ * One CLI process for a whole run. A turn boundary is a `result` event on
+ * stdout, not a new process, so `SessionStart` fires once per run the way it
+ * does in a real session. `send` resolves with the next result event.
+ */
+export function createSessionProcess({ command, args, cwd, env, onStderr = null }) {
+  const child = spawn(command, args, {
+    cwd,
+    env,
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const payload = parseCliResult(proc.stdout);
-  return {
-    ...proc,
-    payload,
-    ok: Boolean(payload) && payload.is_error !== true && proc.code === 0 && !proc.timedOut,
+  const waiters = [];
+  let buffer = '';
+  let stderr = '';
+  let closed = false;
+  let exitCode = null;
+  let timer = null;
+
+  const settle = (value) => {
+    const waiter = waiters.shift();
+    if (!waiter) return false;
+    waiter(value);
+    return true;
   };
+
+  const handleLine = (line) => {
+    const event = parseCliResult(line);
+    if (event) settle({ event, timedOut: false, error: '' });
+  };
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk;
+    let index = buffer.indexOf('\n');
+    while (index >= 0) {
+      handleLine(buffer.slice(0, index));
+      buffer = buffer.slice(index + 1);
+      index = buffer.indexOf('\n');
+    }
+  });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+    if (onStderr) onStderr(chunk);
+  });
+  child.stdin.on('error', () => {});
+  child.on('error', (error) => {
+    closed = true;
+    while (waiters.length) settle({ event: null, timedOut: false, error: String(error) });
+  });
+  child.on('close', (code) => {
+    closed = true;
+    exitCode = code ?? -1;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    while (waiters.length) {
+      settle({
+        event: null,
+        timedOut: false,
+        error: stderr ? firstLine(stderr) : `cli exited with code ${exitCode}`,
+      });
+    }
+  });
+
+  return {
+    send(prompt, timeoutMs = 0) {
+      if (closed) {
+        return Promise.resolve({
+          event: null,
+          timedOut: false,
+          error: `cli is not running (code ${exitCode})`,
+        });
+      }
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          resolve(value);
+        };
+        waiters.push(finish);
+        if (timeoutMs > 0) {
+          timer = setTimeout(() => {
+            timer = null;
+            child.kill('SIGKILL');
+            finish({ event: null, timedOut: true, error: `one turn exceeded ${timeoutMs}ms` });
+          }, timeoutMs);
+        }
+        child.stdin.write(sessionInputLine(prompt));
+      });
+    },
+    close() {
+      if (closed) return;
+      try {
+        child.stdin.end();
+      } catch {
+        // the process is already gone
+      }
+    },
+    kill() {
+      if (closed) return;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // the process is already gone
+      }
+    },
+    get closed() {
+      return closed;
+    },
+    get stderr() {
+      return stderr;
+    },
+  };
+}
+
+function openCliSession({ cli, workspace, arm, sessionId, treatmentHome, args, env }) {
+  return createSessionProcess({ command: cli, args, cwd: workspace, env });
 }
 
 function numberOrNull(value) {
@@ -398,52 +511,68 @@ async function runArm({
   model,
   timeoutMs,
   checkTimeoutMs,
-  runTurn,
+  runSession,
   check,
 }) {
   const sessionId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
   const turns = [];
-  for (let index = 0; index < prompts.length; index += 1) {
-    const started = new Date().toISOString();
-    const result = await runTurn({
-      cli,
-      configDir,
-      workspace,
-      sessionId,
-      resume: index > 0,
-      prompt: prompts[index],
-      model,
-      timeoutMs,
-      arm,
-      treatmentHome,
-    });
-    const checked = await check(workspace, checkTimeoutMs);
-    const hooks = arm === 'treatment'
-      ? summarizeMetrics(readSessionMetricEntries(treatmentHome, workspace, sessionId))
-      : null;
-    turns.push({
-      index: index + 1,
-      started_at: started,
-      prompt_chars: prompts[index].length,
-      duration_ms: result.durationMs,
-      cli_ok: result.ok,
-      exit_code: result.code,
-      timed_out: result.timedOut,
-      session_id: result.payload?.session_id || sessionId,
-      context_usage_ratio: numberOrNull(
-        result.payload?.usage?.context_usage_ratio ?? result.payload?.context_usage_ratio,
-      ),
-      result_chars: String(result.payload?.result || '').length,
-      permission_denials: Array.isArray(result.payload?.permission_denials)
-        ? result.payload.permission_denials.length
-        : null,
-      check: checked,
-      hooks: hooks
-        ? { entries: hooks.entries, events: hooks.events, denials: hooks.denials, jobs: hooks.jobs }
-        : null,
-      error: result.ok ? '' : (result.spawnError || firstLine(result.stderr) || 'no result payload'),
-    });
+  const session = runSession({
+    cli,
+    sessionId,
+    workspace,
+    arm,
+    treatmentHome,
+    args: cliSessionArgs({ configDir, model, sessionId }),
+    env: turnEnv({ arm, sessionId, treatmentHome }),
+  });
+  let stopped = '';
+  try {
+    for (let index = 0; index < prompts.length; index += 1) {
+      const started = new Date().toISOString();
+      const result = await session.send(prompts[index], timeoutMs);
+      const checked = await check(workspace, checkTimeoutMs);
+      const hooks = arm === 'treatment'
+        ? summarizeMetrics(readSessionMetricEntries(treatmentHome, workspace, sessionId))
+        : null;
+      const payload = result.event;
+      const ok = Boolean(payload) && payload.is_error !== true && !result.timedOut;
+      const refusal = Array.isArray(payload?.errors) && payload.errors.length
+        ? String(payload.errors[0])
+        : '';
+      turns.push({
+        index: index + 1,
+        started_at: started,
+        prompt_chars: prompts[index].length,
+        duration_ms: Number(payload?.duration_ms) || 0,
+        cli_ok: ok,
+        exit_code: payload ? 0 : -1,
+        timed_out: Boolean(result.timedOut),
+        session_id: payload?.session_id || sessionId,
+        context_usage_ratio: numberOrNull(
+          payload?.usage?.context_usage_ratio ?? payload?.context_usage_ratio,
+        ),
+        result_chars: String(payload?.result || '').length,
+        permission_denials: Array.isArray(payload?.permission_denials)
+          ? payload.permission_denials.length
+          : null,
+        check: checked,
+        hooks: hooks
+          ? { entries: hooks.entries, events: hooks.events, denials: hooks.denials, jobs: hooks.jobs }
+          : null,
+        error: ok ? '' : (refusal || payload?.result || result.error || 'no result payload'),
+      });
+      if (result.timedOut) {
+        stopped = 'turn timeout';
+        break;
+      }
+      if (session.closed) {
+        stopped = result.error || 'cli closed';
+        break;
+      }
+    }
+  } finally {
+    session.close();
   }
   return {
     arm,
@@ -453,6 +582,7 @@ async function runArm({
     model,
     started_at: startedAt,
     finished_at: new Date().toISOString(),
+    stopped,
     turns,
     summary: summarizeTurns(turns),
   };
@@ -596,7 +726,7 @@ export async function runAb(options = {}) {
   }
   fs.mkdirSync(outDir, { recursive: true });
 
-  const runTurn = options.runTurn || runCliTurn;
+  const runSession = options.runSession || openCliSession;
   const check = options.check || runFixtureCheck;
   const cli = options.cli || process.env.QODER_CLI || 'qoderclicn';
   const runs = [];
@@ -617,7 +747,7 @@ export async function runAb(options = {}) {
         model,
         timeoutMs: Number.parseInt(options.timeoutMs, 10) || 300000,
         checkTimeoutMs: Number.parseInt(options.checkTimeoutMs, 10) || 120000,
-        runTurn,
+        runSession,
         check,
       });
       atomicWrite(

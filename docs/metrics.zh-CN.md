@@ -136,19 +136,21 @@ Baseline（不加这一层）：
 
 `mhe ab` 会把同一个多轮脚本任务跑两遍：一遍对着普通的 Qoder 配置
 （baseline），一遍对着装了这个 harness 的配置（treatment）。
-每一轮都是一个独立的 CLI 进程，并通过 resume 复用同一个会话。
+每次 run 只起一个 CLI 进程，
+所有 prompt 以 `stream-json` 的 user 消息写入，
+turn 的边界是一个 `result` 事件，
+所以 `SessionStart` 每次 run 只触发一次，和真实会话一致。
 
-这次重启不是免费的，也不等于真实会话：`SessionStart` 每个进程触发一次，
-所以 15 轮的 run 会触发 15 次，而真实会话只触发 1 次。
-在一轮 15 轮的实测里，conductor 策略加 capsule 进入 transcript 共 29 次
-（60.6k tokens），其中 29.1k 是真实会话不会付出的 `SessionStart` 副本。
-所以 `mhe ab` 是 token 增长的探针，不是注意力密度的测量。
+这个改动之前，runner 每轮新起一个进程。
+那会让 `SessionStart` 每轮重触发，把 treatment 一侧抬高：
+15 轮的 run 里，conductor 策略加 capsule 进入 transcript 共 29 次
+（60.6k tokens），其中 29.1k 是真实会话不付的重启开销。
+那些数字高估了注入成本；现在的 runner 不会再产生它们。
 
 要归因“到底什么进了 conductor”，读 CLI 的会话 transcript：
 `<config-dir>/projects/<workspace-key>/<session>.jsonl`，
 按条目类型累加（`user` 工具结果、`attachment` hook 注入、
 `assistant` 文本与思考）。
-上面那些数字就是这么来的。
 
 ```
 mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
@@ -162,7 +164,10 @@ runner 强制遵守的规则：
 - treatment 的状态目录是独立的 `MY_HARNESS_ENHANCE_HOME`；
 - 模型必须固定写死，`Auto` 会被拒绝；
 - 结果写在仓库之外（默认
-  `~/.mhe-test/ab-results/<stamp>`）。
+  `~/.mhe-test/ab-results/<stamp>`）；
+- 返回 `is_error` 的 turn 会把 CLI 自己的错误文本记下来；
+  免费 `qfmodel` 有每日用量上限，
+  长跑可能以 `error_code` 110 收场而不是结果。
 
 每轮会记录模型返回的 `context_usage_ratio`、CLI 耗时、
 fixture 的测试结果，以及 treatment arm 的 hook 计数。
