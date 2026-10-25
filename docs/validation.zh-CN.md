@@ -401,3 +401,24 @@ worktrees 7 天。
 - `~/.zcode/hooks.json` 与 `~/.zcode/mcp.json`：0 处 harness 引用。
 - A/B 全程跑在 `~/.mhe-test/` 下的
   `--config-dir` 副本里。
+
+## 14. 同一 workspace 里的两个会话（F-12）
+
+两个 `--session-id` 不同的 CLI 会话并发跑在同一个 workspace 上，
+用的是隔离的 treatment config。各自拿到自己的分片。
+
+| 检查项 | 结果 |
+| --- | --- |
+| 分片独立 | `sessions/<A>/` 与 `sessions/<B>/` 各自有 goal、brief、plan、capsule、session |
+| 项目级共享 | config、decisions、metrics、artifacts、logs 与 sessions.json 留在项目根 |
+| 不串台 | 两个 capsule 都不含对方会话的目标或任务 |
+| `mhe report --session` | 各自 3 条指标，零交叉聚合 |
+| 续跑 | `-r <id>` 记录 `source: "resume"` 并重建 capsule（256 tokens） |
+
+goal、brief、plan 是按需创建的：一个不派发 worker 的 docs 会话
+不会有 jobs、last-check 或 worktrees 文件。
+
+一个观察：A 的 conductor 调了 `enhance_goal` 自己定了目标，
+B 的 conductor 跳过了，于是 B 保留了 SessionStart 用 prompt 填的那个。
+两种情况下分片都保持隔离，但"conductor 自己定目标"目前是约定，
+不是被强制的东西。

@@ -401,3 +401,24 @@ days and 5 MiB, artifacts at 30 days with a 7-day grace, decisions at 180 days
 - `~/.qoder-cn/hooks/`: empty.
 - `~/.zcode/hooks.json` and `~/.zcode/mcp.json`: zero harness references.
 - The A/B ran entirely on `--config-dir` copies under `~/.mhe-test/`.
+
+## 14. Two sessions in one workspace (F-12)
+
+Two CLI sessions with different `--session-id` values ran concurrently in one
+workspace against the isolated treatment config. Each one got its own shard.
+
+| check | result |
+| --- | --- |
+| separate shards | `sessions/<A>/` and `sessions/<B>/` each hold goal, brief, plan, capsule and session |
+| shared project state | config, decisions, metrics, artifacts, logs and sessions.json stay project-level |
+| no bleed | neither capsule mentions the other session's goal or task |
+| `mhe report --session` | 3 metric entries each, no cross-aggregation |
+| resume | `-r <id>` records `source: "resume"` and rebuilds the capsule (256 tokens) |
+
+Goal, brief and plan are created lazily: a docs session that dispatches no
+worker has no jobs, last-check or worktrees file.
+
+One observation: session A's conductor called `enhance_goal` and set its own
+goal, while session B's conductor skipped it, so B kept the goal that
+SessionStart seeded from the prompt. The shards stayed isolated either way, but
+"the conductor sets its own goal" is a convention, not something enforced.
