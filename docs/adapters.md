@@ -24,9 +24,9 @@ Modules:
 | `src/adapters/zcode/adapter.mjs` | The ZCode adapter: hooks merged into `config.json`, shared MCP server, conductor policy over ZCode's native Agent subagents. |
 | `src/adapters/zcode/install.mjs` | ZCode detect/install/uninstall/doctor/refresh: config.json merging with backups, idempotent entries, user-owned entries preserved. |
 | `src/adapters/zcode/hook.mjs` | ZCode hook script for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`. All output is ZCode hook JSON. |
-| `src/adapters/zcode/lib.mjs` | ZCode-local payload accessors and tool policy decisions (the adapters stay independent; only `src/core/*` is shared). |
+| `src/core/hook-policy.mjs` | The harness-agnostic policy core both adapters import: payload accessors, tool allow/deny decisions, and the dispatch gates. The adapters keep only the payload shape and their own harness compensation. |
 
-Tests: `node --test test/adapters.test.mjs test/zcode.test.mjs`.
+Tests: `node --test test/adapters.test.mjs test/zcode.test.mjs test/adapter-conformance.test.mjs`.
 
 ## The contract shape
 
@@ -118,10 +118,10 @@ harness is hardcoded in routing.
 | `subagents` | native worker delegation resolved by `core/capabilities.mjs`. |
 | `resultRewrite` | `hooks/hook.mjs` PostToolUse emits `updatedToolOutput`. |
 | `preCompact` | `hooks/hook.mjs` `onPreCompact`. |
-| `mcp` | stdio server `mcp/recall-server.mjs` registered via `mergeMcp`. |
+| `mcp` | stdio server `src/mcp/recall-server.mjs` registered via `mergeMcp`. |
 | `installer` | wrapped `installQoder` / `uninstallQoder` / `doctorQoder`. |
 | `overlay` | `overlay.mjs` sync/uninstall/doctor, run inside install/uninstall/doctor (results include an `overlay` report); exposed overlay-only via `qoderOverlay` for callers that need it. |
-| `sessionMap` | per-session conductor map: `core/store.mjs` `readSessions`/`markSession` + `hooks/lib.mjs` `sessionIsConductor`. |
+| `sessionMap` | per-session conductor map: `core/store.mjs` `readSessions`/`markSession` + `core/hook-policy.mjs` `sessionIsConductor`. |
 
 Not declared (and not faked): `skills`, `modelSelection`, `statusLine`,
 `crossSession`.
@@ -141,7 +141,7 @@ behavior changed — the adapter is a boundary, not a refactor.
 |---|---|
 | `hooks` | `install.mjs` merges entries into `<configDir>/config.json` under `hooks.events`: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop. Entries are `{ type: 'process', command: <node>, args: [<absolute hook.mjs>, <Event>], timeoutMs }` and `hooks.enabled` is turned on. |
 | `subagents` | ZCode's native Agent delegation; capability resolution uses the built-in agents (`general-purpose`, `Explore`). ZCode custom agents are plugin-provided behind a manual UI step, so they are not part of automated detection; `<configDir>/agents` is runtime subagent session storage and is never scanned for definitions. |
-| `mcp` | stdio server `harness-enhance` merged into `mcp.servers`, pointing at the harness-neutral `src/adapters/qoder/mcp/recall-server.mjs` with `MY_HARNESS_ENHANCE_HARNESS=zcode`; project-scoped installs also pin `MY_HARNESS_ENHANCE_PROJECT`, global installs set `MY_HARNESS_ENHANCE_GLOBAL=1` and pin no workspace. |
+| `mcp` | stdio server `harness-enhance` merged into `mcp.servers`, pointing at the harness-neutral `src/mcp/recall-server.mjs` with `MY_HARNESS_ENHANCE_HARNESS=zcode`; project-scoped installs also pin `MY_HARNESS_ENHANCE_PROJECT`, global installs set `MY_HARNESS_ENHANCE_GLOBAL=1` and pin no workspace. |
 | `installer` | `installZCode` / `uninstallZCode` / `doctorZCode` / `refreshZCode`: config.json backup, idempotent merge, dry-run writes nothing, corrupt config refused instead of clobbered, `hooks.enabled` handed back to its pre-install value on uninstall. Project-scoped and `--global` modes. config.json is the ONLY file the installer writes under the config dir — no agent files, ever. |
 | `sessionMap` | `hook.mjs` marks conductor sessions in `sessions.json` (SessionStart with source startup/new/resume/clear) and gates enforcement on that map. |
 

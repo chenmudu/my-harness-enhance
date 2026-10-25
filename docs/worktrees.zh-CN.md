@@ -167,6 +167,13 @@ Qoder conductor 的 `PreToolUse` hook 在派发时刻就强制执行 plan 图，
 - 该门禁只在已存储的 brief 满足 `profile === 'code'` 时运行，且只
   针对派发 `Agent`/`Task` 的 conductor。非 code 的 brief、其他
   工具和 worker 事件完全不受影响。
+- 还没有 brief 的会话等于尚未声明档案。
+  此时派发「能写」的 worker 会被拒绝，直到档案被声明为止：这样的
+  worker 会直接改共享 checkout，而之后再切到 code 档案就会遇到
+  脏 base，任何 worktree 都无法从它创建。只读 worker
+  （`Explore`、investigator、planner、verifier）在没有 brief 时
+  仍然可以派发。非 code 档案（`general`、`docs`、`research`、`ops`）
+  同样算声明了档案，只是不开启 worktree 门禁。
 - 每一次 code 派发都必须在工具输入 `prompt` 或 `description` 里
   点名它的 plan 任务，例如 `task_id: T2` 这样一行（也接受
   `task_id=T2`；不区分大小写，第一个匹配生效），并且必须包含

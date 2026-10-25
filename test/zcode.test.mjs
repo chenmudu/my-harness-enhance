@@ -268,7 +268,7 @@ test('install merges hooks and MCP into config.json, keeps user entries', () => 
   assert.ok(config.mcp.servers.ComfyUI, 'existing MCP server preserved');
   assert.equal(config.mcp.servers['harness-enhance'].type, 'stdio');
   assert.ok(
-    config.mcp.servers['harness-enhance'].args[0].endsWith(path.join('qoder', 'mcp', 'recall-server.mjs')),
+    config.mcp.servers['harness-enhance'].args[0].endsWith(path.join('mcp', 'recall-server.mjs')),
     'harness-neutral MCP server referenced by absolute path',
   );
   assert.equal(config.mcp.servers['harness-enhance'].env.MY_HARNESS_ENHANCE_HARNESS, 'zcode');
@@ -587,6 +587,7 @@ test('conductor PreToolUse enforces the allowlist', () => {
     const denied = runHook(root, 'PreToolUse', { tool_name: tool, tool_input: {} });
     assert.equal(denyOf(denied.stdout), true, tool);
   }
+  writeBrief(root, { profile: 'general', checks: [] });
   for (const agent of BUILTINS) {
     const allowed = runHook(root, 'PreToolUse', {
       tool_name: 'Agent',

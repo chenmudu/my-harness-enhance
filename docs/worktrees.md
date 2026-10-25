@@ -167,6 +167,13 @@ time, not just at worktree creation:
 - The gate runs only when the stored brief has `profile === 'code'`, and
   only for the conductor dispatching `Agent`/`Task`. Non-code briefs, other
   tools, and worker events are completely unaffected.
+- A session that has no brief yet has not declared its profile. Dispatching a
+  worker that can write is denied until the profile is declared, because such
+  a worker would edit the shared checkout, and a later switch to the code
+  profile would then find a dirty base that no worktree can be created from.
+  Read-only workers (`Explore`, investigator, planner, verifier) stay
+  dispatchable without a brief. A non-code profile (`general`, `docs`,
+  `research`, `ops`) declares the profile without arming the worktree gate.
 - Every code dispatch must name its plan task in the tool input `prompt`
   or `description`, e.g. the line `task_id: T2` (also accepted:
   `task_id=T2`; case-insensitive, first match wins), and must include

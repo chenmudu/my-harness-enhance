@@ -45,10 +45,10 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 // The hook script lives in this adapter; the MCP server is harness-neutral
-// and physically lives under the first adapter's directory. Referencing it
-// by absolute path is deliberate: one server for every adapter.
+// and lives outside both adapters. Referencing it by absolute path is
+// deliberate: one server for every adapter.
 export const ZCODE_HOOK = path.join(HERE, 'hook.mjs');
-export const RECALL_MCP = path.join(HERE, '..', 'qoder', 'mcp', 'recall-server.mjs');
+export const RECALL_MCP = path.join(HERE, '..', '..', 'mcp', 'recall-server.mjs');
 
 // ZCode fires exactly these lifecycle events; there is no SubagentStart,
 // SubagentStop or PreCompact. PermissionRequest/PostToolUseFailure exist but

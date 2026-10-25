@@ -24,9 +24,9 @@ adapter 不运行 agent。
 | `src/adapters/zcode/adapter.mjs` | ZCode adapter：hooks 合并进 `config.json`、共享的 MCP server、以及在 ZCode 原生 Agent subagent 之上施加的 conductor 策略。 |
 | `src/adapters/zcode/install.mjs` | ZCode 的 detect/install/uninstall/doctor/refresh：带备份的 config.json 合并、幂等（idempotent）条目、保留用户自有的条目。 |
 | `src/adapters/zcode/hook.mjs` | ZCode 的 hook 脚本，用于 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`。所有输出都是 ZCode hook JSON。 |
-| `src/adapters/zcode/lib.mjs` | ZCode 本地的 payload 访问器与工具策略决策（各个 adapter 保持互相独立；只有 `src/core/*` 是共享的）。 |
+| `src/core/hook-policy.mjs` | 两个 adapter 共同导入的、与 harness 无关的策略核心：payload 访问器、工具允许/拒绝决策，以及派发闸门。adapter 只保留 payload 形状和各自 harness 的补偿逻辑。 |
 
-测试：`node --test test/adapters.test.mjs test/zcode.test.mjs`.
+测试：`node --test test/adapters.test.mjs test/zcode.test.mjs test/adapter-conformance.test.mjs`.
 
 ## 契约的形态
 
@@ -118,10 +118,10 @@ harness 的硬编码。
 | `subagents` | 由 `core/capabilities.mjs` 解析出的原生 worker 派发。 |
 | `resultRewrite` | `hooks/hook.mjs` 的 PostToolUse 会发出 `updatedToolOutput`。 |
 | `preCompact` | `hooks/hook.mjs` 的 `onPreCompact`。 |
-| `mcp` | 通过 `mergeMcp` 注册的 stdio server `mcp/recall-server.mjs`。 |
+| `mcp` | 通过 `mergeMcp` 注册的 stdio server `src/mcp/recall-server.mjs`。 |
 | `installer` | 包装过的 `installQoder` / `uninstallQoder` / `doctorQoder`。 |
 | `overlay` | `overlay.mjs` 的 sync/uninstall/doctor，在 install/uninstall/doctor 内部运行（结果里包含一份 `overlay` 报告）；对需要它的调用方，通过 `qoderOverlay` 只暴露 overlay 部分。 |
-| `sessionMap` | 每会话的 conductor map：`core/store.mjs` 的 `readSessions`/`markSession` 加上 `hooks/lib.mjs` 的 `sessionIsConductor`。 |
+| `sessionMap` | 每会话的 conductor map：`core/store.mjs` 的 `readSessions`/`markSession` 加上 `core/hook-policy.mjs` 的 `sessionIsConductor`。 |
 
 未声明（也没有假装声明）：`skills`、`modelSelection`、`statusLine`、
 `crossSession`。
@@ -141,7 +141,7 @@ harness 的硬编码。
 |---|---|
 | `hooks` | `install.mjs` 把条目合并进 `<configDir>/config.json` 的 `hooks.events` 之下：SessionStart、UserPromptSubmit、PreToolUse、PostToolUse、Stop。条目形如 `{ type: 'process', command: <node>, args: [<absolute hook.mjs>, <Event>], timeoutMs }`，并且 `hooks.enabled` 会被打开。 |
 | `subagents` | ZCode 原生的 Agent 派发；能力解析使用内置 agent（`general-purpose`、`Explore`）。ZCode 的自定义 agent 由 plugin 提供，并且前面隔着一道手动 UI 步骤，所以它们不属于自动化探测的一部分；`<configDir>/agents` 是运行时 subagent 会话存储，从不被扫描来寻找定义。 |
-| `mcp` | stdio server `harness-enhance` 被合并进 `mcp.servers`，指向与 harness 无关的 `src/adapters/qoder/mcp/recall-server.mjs`，并带上 `MY_HARNESS_ENHANCE_HARNESS=zcode`；项目级（project-scoped）安装还会钉住 `MY_HARNESS_ENHANCE_PROJECT`，全局安装设置 `MY_HARNESS_ENHANCE_GLOBAL=1` 且不钉住任何 workspace。 |
+| `mcp` | stdio server `harness-enhance` 被合并进 `mcp.servers`，指向与 harness 无关的 `src/mcp/recall-server.mjs`，并带上 `MY_HARNESS_ENHANCE_HARNESS=zcode`；项目级（project-scoped）安装还会钉住 `MY_HARNESS_ENHANCE_PROJECT`，全局安装设置 `MY_HARNESS_ENHANCE_GLOBAL=1` 且不钉住任何 workspace。 |
 | `installer` | `installZCode` / `uninstallZCode` / `doctorZCode` / `refreshZCode`：config.json 备份、幂等合并、dry-run 什么都不写、遇到损坏的配置直接拒绝而不是覆盖掉，卸载时把 `hooks.enabled` 交还给它在安装前的值。支持项目级和 `--global` 两种模式。config.json 是安装器在 config dir 下写入的唯一文件 —— 永远不写任何 agent 文件。 |
 | `sessionMap` | `hook.mjs` 在 `sessions.json` 里标记 conductor 会话（source 为 startup/new/resume/clear 的 SessionStart），并以这张 map 作为强制执行的门禁（gate）。 |
 

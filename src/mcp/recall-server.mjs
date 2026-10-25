@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
-import { loadConfig } from '../../../core/config.mjs';
-import { resolveProject } from '../../../core/state-root.mjs';
-import { buildCapsule, workerContract } from '../../../core/capsule.mjs';
-import { buildBrief } from '../../../core/brief.mjs';
-import { runBriefChecks, validateBriefChecks } from '../../../core/checks.mjs';
-import { getArtifact, searchArtifacts, isHandle } from '../../../core/artifacts.mjs';
+import { loadConfig } from '../core/config.mjs';
+import { resolveProject } from '../core/state-root.mjs';
+import { buildCapsule, workerContract } from '../core/capsule.mjs';
+import { buildBrief } from '../core/brief.mjs';
+import { runBriefChecks, validateBriefChecks } from '../core/checks.mjs';
+import { getArtifact, searchArtifacts, isHandle } from '../core/artifacts.mjs';
 import {
   appendDecision,
   readBrief,
@@ -19,7 +19,7 @@ import {
   writeGoal,
   writeLastCheck,
   writePlan,
-} from '../../../core/store.mjs';
+} from '../core/store.mjs';
 import {
   checkTaskDependencies,
   createWorktree,
@@ -28,7 +28,7 @@ import {
   listWorktrees,
   removeWorktree,
   validateWorktree,
-} from '../../../core/worktree.mjs';
+} from '../core/worktree.mjs';
 
 const PROJECT_PROP = {
   type: 'string',
@@ -246,6 +246,10 @@ const TOOLS = [
         session: SESSION_PROP,
         action: { type: 'string', enum: ['create', 'list', 'diff', 'land', 'remove'] },
         task_id: { type: 'string', description: 'Plan task id. Required for create, diff, land, and remove.' },
+        carry_base: {
+          type: 'boolean',
+          description: 'Create action only: carry the uncommitted state of the base checkout into the new worktree instead of refusing a dirty base (default false). The base keeps its uncommitted work untouched; landing adds the task work on top of it.',
+        },
         run_checks: {
           type: 'boolean',
           description: 'Land action only: run the current brief checks against the base checkout after applying (default true). On failure the base is fully reverted and the worktree kept. No brief: checks skipped with a warning.',
@@ -519,7 +523,7 @@ function toolEnhanceWorktree(args = {}) {
   if (action === 'create') {
     const gate = checkTaskDependencies(root, taskId, session);
     if (!gate.ok) return jsonResult(gate, true);
-    const created = createWorktree(root, taskId, { session });
+    const created = createWorktree(root, taskId, { session, carryBase: Boolean(args.carry_base) });
     return jsonResult(created, !created.ok);
   }
   if (action === 'diff') return jsonResult(diffWorktree(root, taskId, { session }));

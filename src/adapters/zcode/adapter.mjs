@@ -36,7 +36,7 @@ export const zcodeAdapter = defineAdapter({
     // injection, not a compaction hook, and is not claimed as one.
     preCompact: false,
     // stdio MCP server harness-enhance -> the shared harness-neutral
-    // recall-server (physically under src/adapters/qoder/mcp, same server).
+    // recall-server (physically under src/mcp, the same server for every adapter).
     mcp: true,
     // install/uninstall/doctor/refresh below, with backups and dry-run.
     installer: true,

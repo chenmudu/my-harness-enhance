@@ -33,7 +33,7 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = path.join(HERE, 'templates', 'agents');
 const HOOK = path.join(HERE, 'hooks', 'hook.mjs');
-const MCP = path.join(HERE, 'mcp', 'recall-server.mjs');
+const MCP = path.join(HERE, '..', '..', 'mcp', 'recall-server.mjs');
 
 const EVENTS = [
   'SessionStart',

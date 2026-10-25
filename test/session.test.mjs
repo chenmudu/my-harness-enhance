@@ -51,7 +51,7 @@ delete process.env.MY_HARNESS_ENHANCE_SESSION;
 delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.resolve(HERE, '..', 'src', 'adapters', 'qoder', 'mcp', 'recall-server.mjs');
+const SERVER = path.resolve(HERE, '..', 'src', 'mcp', 'recall-server.mjs');
 const CLI = path.resolve(HERE, '..', 'bin', 'mhe.mjs');
 
 function makeRoot() {

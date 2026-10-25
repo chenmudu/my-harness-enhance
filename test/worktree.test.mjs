@@ -42,7 +42,7 @@ delete process.env.MY_HARNESS_ENHANCE_SESSION;
 delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.resolve(HERE, '..', 'src', 'adapters', 'qoder', 'mcp', 'recall-server.mjs');
+const SERVER = path.resolve(HERE, '..', 'src', 'mcp', 'recall-server.mjs');
 const HOOK = path.resolve(HERE, '..', 'src', 'adapters', 'qoder', 'hooks', 'hook.mjs');
 
 function gitAt(dir, ...args) {
@@ -944,13 +944,20 @@ test('dispatch gate is inert for non-code briefs and worker events', () => {
     assert.equal(unbothered.trim(), '', profile);
   }
 
-  // No brief at all: nothing is enforced.
+  // No brief at all: the profile is undeclared, so only read-only workers
+  // stay dispatchable.
   const bare = makeRepo();
   saveConfig(bare, {
-    capabilities: resolveCapabilities({ availableAgents: ['general-purpose'] }),
+    capabilities: resolveCapabilities({ availableAgents: ['general-purpose', 'Explore'] }),
   });
   const noBrief = runHook(bare, 'PreToolUse', dispatchPayload('Agent', { prompt: 'no plan needed' }));
-  assert.equal(noBrief.trim(), '');
+  assert.match(denyReasonOf(noBrief), /enhance_brief/);
+  const bareReadOnly = runHook(bare, 'PreToolUse', {
+    model: 'qfmodel',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore', prompt: 'look around' },
+  });
+  assert.equal(bareReadOnly.trim(), '');
 
   // Worker events keep their own policy, untouched by the dispatch gate.
   const root = dispatchRoot();

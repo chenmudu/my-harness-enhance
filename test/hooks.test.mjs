@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { initStore, readGoal, readJobs, readMetrics, readPlan, storePaths, upsertJob, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
+import { initStore, readGoal, readJobs, readMetrics, readPlan, storePaths, upsertJob, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
 import { canonicalPath } from '../src/core/state-root.mjs';
 import { saveConfig } from '../src/core/config.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
@@ -187,6 +187,17 @@ test('conductor PreToolUse denies execution and allows native workers', () => {
   });
   assert.equal(denyOf(read.stdout), true);
 
+  // A write-capable worker waits for the declared profile: dispatched before
+  // the brief, it would edit the shared checkout.
+  const undeclared = runHook(root, 'PreToolUse', {
+    model: 'qfmodel',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'general-purpose' },
+  });
+  assert.equal(denyOf(undeclared.stdout), true);
+  assert.match(parseJson(undeclared.stdout).hookSpecificOutput.permissionDecisionReason, /enhance_brief/);
+
+  writeBrief(root, { profile: 'general', checks: [] });
   for (const agent of ['Explore', 'mhe-reasoner', 'general-purpose']) {
     const allowed = runHook(root, 'PreToolUse', {
       model: 'qfmodel',

@@ -31,7 +31,7 @@ export const qoderAdapter = defineAdapter({
     resultRewrite: true,
     // PreCompact event is registered and handled (see hooks/hook.mjs).
     preCompact: true,
-    // stdio MCP server harness-enhance -> mcp/recall-server.mjs.
+    // stdio MCP server harness-enhance -> src/mcp/recall-server.mjs.
     mcp: true,
     // install/uninstall/doctor lifecycle below.
     installer: true,

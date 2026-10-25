@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import path from 'node:path';
 import { ensureState, loadConfig } from '../../../core/config.mjs';
 import { detectAvailableAgents, resolveCapabilities } from '../../../core/capabilities.mjs';
 import {
@@ -26,8 +25,6 @@ import {
   newJobId,
   readBrief,
   readGoal,
-  readJobs,
-  readLastCheck,
   readSession,
   readWorktrees,
   sessionKey,
@@ -36,12 +33,13 @@ import {
   writeGoal,
   writeSession,
 } from '../../../core/store.mjs';
-import { checkTaskDependencies, diffWorktree } from '../../../core/worktree.mjs';
-import { canonicalPath } from '../../../core/state-root.mjs';
+import { diffWorktree } from '../../../core/worktree.mjs';
 import {
   agentTypeOf,
   conductorDenyReason,
   denyTool,
+  dispatchGateReason,
+  harnessProjectArg,
   hookJson,
   isAllowedConductorTool,
   isConductorSession,
@@ -49,15 +47,17 @@ import {
   logError,
   modelOf,
   projectContext,
+  projectGateReason,
   readStdin,
   roleFor,
   sessionIsConductor,
   toolNameOf,
+  verificationGateReason,
   workerPolicy,
   workerToolDecision,
   writeJson,
   writeText,
-} from './lib.mjs';
+} from '../../../core/hook-policy.mjs';
 
 const EVENT = process.argv[2] || 'Unknown';
 
@@ -78,120 +78,6 @@ function recordMetric(root, event, session = '') {
   }
 }
 
-const HARNESS_MCP_PREFIXES = ['mcp__harness-enhance__', 'mcp__harness_enhance__'];
-
-/**
- * Deterministic project-argument gate. A conductor that passes a `project`
- * resolving outside its own session root silently writes state into the
- * wrong workspace (seen in a real Qoder session: the round-1 path copied
- * from GOAL/notes). Extract the project argument for harness MCP calls:
- * direct tool names and the mcp_call/mcp_get gateway.
- */
-function harnessProjectArg(tool, toolInput) {
-  if (
-    HARNESS_MCP_PREFIXES.some((prefix) => tool.startsWith(prefix))
-    || tool.startsWith('enhance_')
-  ) {
-    return typeof toolInput?.project === 'string' ? toolInput.project.trim() : '';
-  }
-  if (tool === 'mcp_call' || tool === 'mcp_get') {
-    const target = String(toolInput?.toolName || toolInput?.name || '');
-    if (!HARNESS_MCP_PREFIXES.some((prefix) => target.startsWith(prefix))) return '';
-    const args = toolInput?.arguments;
-    return args && typeof args.project === 'string' ? args.project.trim() : '';
-  }
-  return '';
-}
-
-function projectGateReason(root, projectArg) {
-  if (!projectArg) return '';
-  const sessionRoot = canonicalPath(root);
-  const project = canonicalPath(projectArg);
-  if (project === sessionRoot) return '';
-  const rel = path.relative(sessionRoot, project);
-  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return '';
-  return `project mismatch: ${project} is not this session root ${sessionRoot} or a path inside it. `
-    + `Use project: ${sessionRoot}; never copy a workspace path from GOAL/notes.`;
-}
-
-// The conductor must name the plan task it dispatches so dependencies can be
-// enforced at dispatch time: "task_id: T2" (or task_id=T2) in the Agent/Task
-// prompt or description. Case-insensitive, first match wins.
-const DISPATCH_TASK_ID_RE = /task_id\s*[:=]\s*([A-Za-z0-9._-]{1,64})/i;
-const DISPATCH_WORKTREE_RE = /(?:^|\n)\s*worktree(?:\s+path)?\s*(?:\([^)\r\n]*\))?\s*[:=]\s*([^\r\n]+)/i;
-
-function normalizeWorktreeRef(value) {
-  return String(value || '').trim().replace(/^[`"']+|[`"']+$/g, '').trim();
-}
-
-/**
- * A code dispatch must name the exact worktree registered for its plan task.
- * A stale/wrong hash is a hard denial, not a worker editing a nonexistent
- * directory.
- */
-function dispatchWorktreeReason(root, taskId, text, session = '') {
-  const matched = text.match(DISPATCH_WORKTREE_RE);
-  if (!matched) {
-    return `code tasks must include worktree: <path> in the dispatch prompt (the exact path returned by enhance_worktree create for ${taskId}). Add the line and retry.`;
-  }
-  const ref = normalizeWorktreeRef(matched[1]);
-  const entry = readWorktrees(root, session).worktrees?.[taskId];
-  if (!entry?.path) {
-    return `no worktree is registered for task ${taskId}; call enhance_worktree create task_id=${taskId} and copy its exact path.`;
-  }
-  if (canonicalPath(ref) !== canonicalPath(entry.path)) {
-    return `worktree path mismatch for task ${taskId}: got ${ref}, expected ${entry.path}. Use the exact path returned by enhance_worktree create.`;
-  }
-  return '';
-}
-
-/**
- * Dependency gate for conductor dispatch, code profile only. Returns a deny
- * reason, or '' when the dispatch may proceed (including non-code briefs and
- * dispatches that carry no plan task, which are left to the base policy).
- */
-function dispatchGateReason(root, toolInput, session = '') {
-  const brief = readBrief(root, session);
-  if (!brief || String(brief.profile || '') !== 'code') return '';
-  const text = [toolInput?.prompt, toolInput?.description]
-    .map((value) => (typeof value === 'string' ? value : ''))
-    .join('\n');
-  const matched = text.match(DISPATCH_TASK_ID_RE);
-  if (!matched) {
-    const hints = Object.entries(readWorktrees(root, session).worktrees || {})
-      .filter(([, entry]) => entry?.path && String(entry.status || 'active') !== 'landed')
-      .slice(0, 3)
-      .map(([id, entry]) => `task_id: ${id}\nworktree: ${entry.path}`)
-      .join('\n\n');
-    return 'code tasks must include task_id: <plan id> and worktree: <exact path> in the dispatch prompt. '
-      + (hints
-        ? `Use one of these exact prefixes:\n${hints}`
-        : 'Call enhance_worktree create first; it returns the exact prompt_prefix to copy.');
-  }
-  const gate = checkTaskDependencies(root, matched[1], session);
-  if (!gate.ok) return `dispatch blocked for task ${matched[1]}: ${gate.blocker}`;
-  const worktreeReason = dispatchWorktreeReason(root, matched[1], text, session);
-  if (worktreeReason) return worktreeReason;
-  const landedEntry = readWorktrees(root, session).worktrees?.[matched[1]];
-  if (String(landedEntry?.status || '') === 'landed') {
-    return `task ${matched[1]} is already landed; do not dispatch another worker. Remove the worktree with enhance_worktree remove and report the result.`;
-  }
-  const lastCheck = readLastCheck(root, session);
-  const checkedIds = Array.isArray(lastCheck?.task_ids) ? lastCheck.task_ids.map(String) : [];
-  const verified = Boolean(
-    lastCheck?.ok
-    && (
-      checkedIds.includes(matched[1])
-      || (checkedIds.length === 0 && String(gate.task?.status) === 'completed')
-    )
-  );
-  if (verified) {
-    const landId = String(lastCheck?.worktree_task_id || matched[1]);
-    return `task ${matched[1]} is already verified by enhance_check; do not dispatch another worker. Call enhance_worktree land task_id=${landId} instead.`;
-  }
-  return '';
-}
-
 function landReminder(root, envelope, agentType = '', session = '') {
   if (agentType === 'Explore') return '';
   const brief = readBrief(root, session);
@@ -206,31 +92,6 @@ function landReminder(root, envelope, agentType = '', session = '') {
     if (!diff.ok || diff.changed_count <= 0) continue;
     return `task ${id}: worktree ${entry.path} has ${diff.changed_count} changed file(s) that are not landed. `
       + `Call enhance_worktree land task_id=${id} directly (it runs the brief checks, marks the task completed, and resets the worktree); do not dispatch a verification worker.`;
-  }
-  return '';
-}
-
-function verificationGateReason(root, toolInput, session = '') {
-  const text = [toolInput?.prompt, toolInput?.description]
-    .map((value) => (typeof value === 'string' ? value : ''))
-    .join('\n');
-  if (!/(verify|verification|parity|recheck|复核|校对|验收)/i.test(text)) return '';
-  const completed = (readJobs(root, session).jobs || []).filter((job) => job.status === 'ok');
-  if (completed.length === 0) return '';
-  const latest = completed.reduce((a, b) => {
-    const at = (job) => Date.parse(job.updated_at || job.finished_at || job.created_at || 0) || 0;
-    return at(b) > at(a) ? b : a;
-  });
-  const jobAt = Date.parse(latest.updated_at || latest.finished_at || latest.created_at || 0) || 0;
-  const last = readLastCheck(root, session);
-  const checkAt = Date.parse(last?.at || 0) || 0;
-  if (!last || checkAt < jobAt) {
-    return `worker ${latest.id} completed task ${latest.task_id || '(unassigned)'} but no deterministic check ran after it. Run enhance_check now; do not dispatch a verification worker.`;
-  }
-  const blockers = (last.findings || []).filter((item) => item.level === 'blocker');
-  const configRules = new Set(['checker.unknown', 'command.unknown', 'brief.missing', 'brief.empty']);
-  if (!last.ok && blockers.length > 0 && blockers.every((item) => configRules.has(item.rule))) {
-    return `the deterministic check is misconfigured (${blockers.map((item) => item.rule).join(', ')}). Fix the brief with enhance_brief using allowed checker ids, then rerun enhance_check; do not dispatch a verification worker.`;
   }
   return '';
 }
@@ -389,7 +250,7 @@ async function onPreToolUse(payload, root, config) {
       denyTool(verificationReason);
       return;
     }
-    const gateReason = dispatchGateReason(root, toolInput, session);
+    const gateReason = dispatchGateReason(root, toolInput, session, config);
     if (gateReason) {
       log(root, { event: EVENT, role: 'conductor', tool, allow: false, gate: 'dispatch' }, config);
       recordMetric(root, { event: 'tool_denied', role: 'conductor', tool, gate: 'dispatch' }, session);
