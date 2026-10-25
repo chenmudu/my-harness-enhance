@@ -75,7 +75,7 @@ raw summary):
 | `session_start` | model, source, session id, `session`, capsule chars/tokens |
 | `prompt_submitted` | prompt chars, goal chars, capsule tokens, injected chars/tokens, changed sections |
 | `dispatch` / `tool_denied` | tool, allow, gate |
-| `job_start` / `job_stop` | agent type, job id, status, valid, retryable, result tokens |
+| `job_start` / `job_stop` | agent type, job id, status, valid, retryable, error class, result tokens |
 | `agent_result` | valid, status, raw and compact envelope tokens |
 | `tool_output_captured` | bytes, mode |
 | `compaction` / `session_stop` | trigger, capsule tokens, blocked, unlanded count |

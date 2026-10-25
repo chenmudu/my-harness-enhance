@@ -410,6 +410,9 @@ function jobSummary(job) {
     summary: job.envelope?.summary || '',
     error: job.error || '',
     retryable: Boolean(job.retryable),
+    error_class: job.error_class || '',
+    attempts: Number(job.attempts || 0),
+    dead_letter: Boolean(job.dead_letter),
     next: job.next || '',
     check_ok: job.envelope?.check_result?.ok ?? null,
   };

@@ -7,6 +7,7 @@ import {
 } from '../../../core/global.mjs';
 import { detectConfigDir, syncCapabilities } from '../install.mjs';
 import { conductorInjection, conductorTurnInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
+import { failureVerdict } from '../../../core/errors.mjs';
 import {
   compactEnvelope,
   extractText,
@@ -25,6 +26,7 @@ import {
   newJobId,
   readBrief,
   readGoal,
+  readJobs,
   readSession,
   readWorktrees,
   sessionKey,
@@ -104,6 +106,14 @@ function artifactSummary(text, fallback = '') {
   const cut = value.slice(0, 236);
   const lastSpace = cut.lastIndexOf(' ');
   return `${(lastSpace > 160 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/** Classify a failed attempt and decide whether another dispatch is worth it. */
+function verdictFor(root, { agentType, taskId, error, session }) {
+  const attempts = (readJobs(root, session).jobs || []).filter((job) => (
+    (taskId && job.task_id === taskId) || (!taskId && job.type === agentType)
+  ) && ['invalid_result', 'failed', 'blocked'].includes(String(job.status))).length;
+  return failureVerdict({ error, attempts });
 }
 
 function syncPlanFromEnvelope(root, envelope, session = '') {
@@ -361,7 +371,12 @@ async function onSubagentStop(payload, root, config) {
     result_handle: artifact.handle,
     envelope,
     error: parsed.ok ? '' : parsed.errors.join('; ').slice(0, 500),
-    retryable: !parsed.ok,
+    ...(parsed.ok ? { retryable: false, error_class: '', dead_letter: false } : verdictFor(root, {
+      agentType,
+      taskId: parsed.value?.task_id || existing?.task_id || '',
+      error: parsed.errors.join('; '),
+      session,
+    })),
     next: parsed.ok ? '' : invalid.next,
   }, session);
   if (parsed.ok) syncPlanFromEnvelope(root, parsed.value, session);
