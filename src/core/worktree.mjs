@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -47,8 +48,12 @@ function isValidTaskId(value) {
   return TASK_ID_RE.test(id) && !id.includes('..');
 }
 
-function git(root, args, { timeout = GIT_TIMEOUT_MS } = {}) {
-  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout });
+function git(root, args, { timeout = GIT_TIMEOUT_MS, env = null } = {}) {
+  return spawnSync('git', ['-C', root, ...args], {
+    encoding: 'utf8',
+    timeout,
+    ...(env ? { env: { ...process.env, ...env } } : {}),
+  });
 }
 
 function gitOk(result) {
@@ -58,6 +63,15 @@ function gitOk(result) {
 function gitError(result) {
   if (!result) return 'git command did not run';
   return String(result.stderr || result.error?.message || '').trim().slice(0, MAX_BLOCKER_CHARS);
+}
+
+/** The checkout's own identity, or a deterministic harness one when it has none. */
+function identityArgs(root) {
+  const email = git(root, ['config', '--get', 'user.email']);
+  const name = git(root, ['config', '--get', 'user.name']);
+  const has = gitOk(email) && Boolean(email.stdout.trim())
+    && gitOk(name) && Boolean(name.stdout.trim());
+  return has ? [] : ['-c', 'user.name=my-harness-enhance', '-c', 'user.email=harness@local'];
 }
 
 function isWithin(parent, child) {
@@ -129,6 +143,111 @@ function assertCleanRepo(root, context = 'before creating a worktree') {
 }
 
 /**
+ * Snapshot the uncommitted state of a base checkout as commit objects, without
+ * touching the working tree, the index, or the ref namespace: nothing on the
+ * user's checkout is committed, staged, or reverted.
+ *
+ * A temporary index does the work. `read-tree HEAD` plus `add -A` plus
+ * `write-tree` yields the tree of the current working tree, tracked changes
+ * and untracked files alike, and `commit-tree` wraps it in a commit that the
+ * worktree can be created from. The original index state is captured in a
+ * second commit so a failed landing can restore the exact staged/unstaged
+ * split.
+ */
+function snapshotBase(root) {
+  const head = git(root, ['rev-parse', 'HEAD']);
+  if (!gitOk(head)) return null;
+  const headRef = head.stdout.trim();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-carry-'));
+  const env = { GIT_INDEX_FILE: path.join(scratch, 'index') };
+  try {
+    if (!gitOk(git(root, ['read-tree', headRef], { env }))) return null;
+    if (!gitOk(git(root, ['add', '-A'], { env }))) return null;
+    const tree = git(root, ['write-tree'], { env });
+    if (!gitOk(tree)) return null;
+    const indexTree = git(root, ['write-tree']);
+    const identity = identityArgs(root);
+    const carry = git(root, [
+      ...identity, 'commit-tree', tree.stdout.trim(), '-p', headRef, '-m', 'mhe carry base',
+    ]);
+    if (!gitOk(carry)) return null;
+    let indexCommit = '';
+    if (gitOk(indexTree) && indexTree.stdout.trim()) {
+      const made = git(root, [
+        ...identity, 'commit-tree', indexTree.stdout.trim(), '-p', headRef, '-m', 'mhe carry index',
+      ]);
+      if (gitOk(made)) indexCommit = made.stdout.trim();
+    }
+    return {
+      commit: carry.stdout.trim(),
+      index_commit: indexCommit,
+      tree: tree.stdout.trim(),
+      head: headRef,
+    };
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** The files the carried snapshot contains. */
+function carriedFiles(root, commit) {
+  const list = git(root, ['ls-tree', '-r', '--name-only', commit]);
+  if (!gitOk(list)) return [];
+  return String(list.stdout || '').split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+/**
+ * Does the base still hold the carried state? A fresh snapshot of the same
+ * state has the same content-addressed tree and the same HEAD, even though
+ * the snapshot commits themselves are new objects.
+ */
+function baseHoldsCarry(root, carry) {
+  const current = snapshotBase(root);
+  if (!current) return false;
+  return current.tree === carry.tree && current.head === carry.head;
+}
+
+/**
+ * Undo a landing on the base checkout.
+ *
+ * Without a carry the base was required to be clean, so reset+clean can only
+ * ever remove the applied patch. With a carry the base holds the user's
+ * uncommitted work, so only the paths the patch touched are restored: the
+ * carried content from the carry commit, and the carried index state from the
+ * index commit. Files the patch created are removed.
+ */
+function revertLanding(base, carry, appliedFiles = []) {
+  if (!carry) {
+    revertBase(base);
+    return;
+  }
+  const carried = new Set(carriedFiles(base, carry.commit));
+  const created = appliedFiles.filter((file) => !carried.has(file));
+  const touched = appliedFiles.filter((file) => carried.has(file));
+  for (const file of created) {
+    const tracked = git(base, ['ls-files', '--', file]);
+    if (gitOk(tracked) && tracked.stdout.trim()) {
+      git(base, ['rm', '--cached', '--force', '--', file]);
+    }
+    try {
+      fs.rmSync(path.join(base, file), { force: true });
+    } catch {
+      // best effort
+    }
+  }
+  if (touched.length > 0) {
+    git(base, ['restore', '--source', carry.commit, '--staged', '--worktree', '--', ...touched], {
+      timeout: WORKTREE_COMMAND_TIMEOUT_MS,
+    });
+    if (carry.index_commit) {
+      git(base, ['restore', '--source', carry.index_commit, '--staged', '--', ...touched], {
+        timeout: WORKTREE_COMMAND_TIMEOUT_MS,
+      });
+    }
+  }
+}
+
+/**
  * Code-level enforcement of plan ordering for worktree creation: the task
  * must exist in the plan and every depends_on task must be completed.
  */
@@ -161,7 +280,7 @@ export function checkTaskDependencies(root, taskId, session = '') {
   return { ok: true, task };
 }
 
-export function createWorktree(root, taskId, { session = '' } = {}) {
+export function createWorktree(root, taskId, { session = '', carryBase = false } = {}) {
   const id = String(taskId || '').trim();
   if (!isValidTaskId(id)) {
     return blocker(
@@ -174,8 +293,35 @@ export function createWorktree(root, taskId, { session = '' } = {}) {
   if (task && String(task.status || '') === 'completed') {
     return blocker(`task ${id} is already completed; create a new task for follow-up work`, { rule: 'worktree.task_completed' });
   }
-  const clean = assertCleanRepo(root);
-  if (!clean.ok) return clean;
+  const inside = git(root, ['rev-parse', '--is-inside-work-tree']);
+  if (!gitOk(inside) || inside.stdout.trim() !== 'true') {
+    return blocker(
+      `project is not a git worktree: ${root}${gitError(inside) ? ` (${gitError(inside)})` : ''}`,
+      { rule: 'worktree.not_git' },
+    );
+  }
+  const status = git(root, ['status', '--porcelain']);
+  if (!gitOk(status)) {
+    return blocker(`cannot read git status: ${gitError(status)}`, { rule: 'worktree.status' });
+  }
+  const dirty = String(status.stdout || '').split('\n').filter(Boolean);
+  let carry = null;
+  if (dirty.length > 0) {
+    if (!carryBase) {
+      return blocker(
+        `working tree is not clean (${dirty.length} change(s)); commit or revert before creating a worktree: ${dirty.slice(0, 8).join(' | ')}. `
+        + 'Pass carry_base=true to carry the uncommitted state into the worktree instead.',
+        { rule: 'worktree.dirty' },
+      );
+    }
+    carry = snapshotBase(root);
+    if (!carry) {
+      return blocker(
+        `cannot snapshot the uncommitted state of ${root}; commit or revert it before creating a worktree`,
+        { rule: 'worktree.carry_failed' },
+      );
+    }
+  }
 
   const managed = canonicalPath(projectWorktreesDir(root, session));
   const target = canonicalPath(worktreePathFor(root, id, session));
@@ -196,7 +342,10 @@ export function createWorktree(root, taskId, { session = '' } = {}) {
   }
 
   fs.mkdirSync(managed, { recursive: true });
-  const add = git(root, ['worktree', 'add', '--detach', target, 'HEAD'], {
+  // A carried base starts the worktree from the snapshot commit, so the worker
+  // sees the uncommitted state it has to build on, and the diff against it
+  // contains only the work the worker did.
+  const add = git(root, ['worktree', 'add', '--detach', target, carry ? carry.commit : 'HEAD'], {
     timeout: WORKTREE_COMMAND_TIMEOUT_MS,
   });
   if (!gitOk(add)) {
@@ -216,6 +365,7 @@ export function createWorktree(root, taskId, { session = '' } = {}) {
     created_at: new Date().toISOString(),
     status: 'active',
   };
+  if (carry) entry.carry = carry;
   upsertWorktree(root, id, entry, session);
   const planTask = updatePlanTask(root, id, { status: 'in_progress' }, session);
   return {
@@ -374,6 +524,10 @@ function briefFindingSummary(item) {
  *   the isolated worktree (`git add -A`, never committed) so the patch covers
  *   BOTH tracked and untracked files, then apply only after
  *   `git apply --check` succeeds.
+ * - A worktree created with `carry_base=true` is the exception to the clean
+ *   base rule: its base holds the carried uncommitted state, so the land
+ *   checks that the base still holds it (`worktree.base_changed` otherwise),
+ *   and a failure restores only the patched paths, not the whole checkout.
  * - run_checks (default true): `inputs` is a pre-apply preflight on the
  *   clean base; the remaining brief checks run against the BASE checkout
  *   after applying. A post-apply `inputs` run would hash the worker's own
@@ -402,8 +556,27 @@ export function landWorktree(
     return blocker(`worktree does not exist on disk: ${located.path}`, { rule: 'worktree.missing' });
   }
   const base = canonicalPath(root);
-  const clean = assertCleanRepo(base, 'before landing a patch');
-  if (!clean.ok) return clean;
+  const carry = located.entry?.carry || null;
+  if (carry) {
+    // The base holds the user's uncommitted work. It must still be exactly
+    // the state the worktree was carried from, otherwise landing would
+    // overwrite newer work and a revert could not restore what it replaced.
+    if (!baseHoldsCarry(base, carry)) {
+      return {
+        ...blocker(
+          'the base checkout changed after the worktree was carried; landing it now would overwrite newer work. '
+          + 'Recreate the worktree from the current base and run the task again.',
+          { rule: 'worktree.base_changed' },
+        ),
+        task_id: located.taskId,
+        worktree: located.path,
+        base,
+      };
+    }
+  } else {
+    const clean = assertCleanRepo(base, 'before landing a patch');
+    if (!clean.ok) return clean;
+  }
 
   // Read the brief before touching anything: when the checks include
   // `inputs`, that hash comparison must run against the clean base, before
@@ -484,7 +657,7 @@ export function landWorktree(
   if (!gitOk(apply)) {
     // git apply is atomic, so this should not trigger; revert defensively and
     // never leave a partial landing behind.
-    revertBase(base);
+    revertLanding(base, carry, appliedFiles);
     return {
       ...blocker(
         `git apply failed after a successful check; base reverted: ${gitError(apply)}`,
@@ -552,7 +725,7 @@ export function landWorktree(
             landed: false,
             inputs_preflight: inputsPreflight,
           }, session);
-          revertBase(base);
+          revertLanding(base, carry, appliedFiles);
           const blockers = checks.findings
             .filter((item) => item.level === 'blocker')
             .map((item) => item.rule)
@@ -579,9 +752,14 @@ export function landWorktree(
   let commitInfo = { created: false, hash: '', subject: '', identity: '' };
   if (commit) {
     const subject = `harness: land ${located.taskId}`;
-    const add = git(base, ['add', '-A']);
+    // A carried base keeps the user's uncommitted work out of the landing
+    // commit: only the landed paths are staged and committed, so the carried
+    // work stays exactly as uncommitted as it was.
+    const add = carry
+      ? git(base, ['add', '--', ...appliedFiles])
+      : git(base, ['add', '-A']);
     if (!gitOk(add)) {
-      revertBase(base);
+      revertLanding(base, carry, appliedFiles);
       return {
         ...blocker(`cannot stage the landed patch on the base: ${gitError(add)}`, { rule: 'worktree.stage_failed' }),
         task_id: located.taskId,
@@ -593,16 +771,12 @@ export function landWorktree(
     }
     // Use the checkout's own identity when it can author a commit; fall back
     // to a deterministic harness identity otherwise. Never amend or reset.
-    const email = git(base, ['config', '--get', 'user.email']);
-    const name = git(base, ['config', '--get', 'user.name']);
-    const hasIdentity = (gitOk(email) && Boolean(email.stdout.trim()))
-      && (gitOk(name) && Boolean(name.stdout.trim()));
-    const identityArgs = hasIdentity
-      ? []
-      : ['-c', 'user.name=my-harness-enhance', '-c', 'user.email=harness@local'];
-    const made = git(base, [...identityArgs, 'commit', '--quiet', '-m', subject]);
+    const identity = identityArgs(base);
+    const made = carry
+      ? git(base, [...identity, 'commit', '--quiet', '-m', subject, '--', ...appliedFiles])
+      : git(base, [...identity, 'commit', '--quiet', '-m', subject]);
     if (!gitOk(made)) {
-      revertBase(base);
+      revertLanding(base, carry, appliedFiles);
       return {
         ...blocker(`landing commit failed; base reverted: ${gitError(made)}`, { rule: 'worktree.commit_failed' }),
         task_id: located.taskId,
@@ -617,7 +791,7 @@ export function landWorktree(
       created: true,
       hash: gitOk(head) ? head.stdout.trim() : '',
       subject,
-      identity: hasIdentity ? 'repo' : 'harness',
+      identity: identity.length === 0 ? 'repo' : 'harness',
     };
     warnings.push('commit created on the base; the worktree is reset and can be removed');
   }

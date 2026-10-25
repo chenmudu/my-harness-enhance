@@ -41,7 +41,9 @@ No arbitrary shell is exposed.
    advisory.
 2. **Clean baseline**: the project must be a git worktree with an empty
    `git status --porcelain`. Dirty baselines are rejected; there is no
-   silent snapshot of uncommitted state.
+   silent snapshot of uncommitted state. `carry_base=true` is the explicit
+   opt-in that carries the uncommitted state into the worktree instead —
+   see "Carrying a dirty base" below.
 3. **Safety**: `task_id` is a strict slug (no separators, no `..`), and the
    target must resolve inside the managed directory and outside the repo. An
    existing path is refused.
@@ -65,7 +67,9 @@ main checkout as a patch, as a safe integration flow:
 
 1. The worktree is resolved and validated exactly like `diff`/`remove`.
 2. The base checkout must be clean (`worktree.dirty` blocker otherwise) —
-   there is no silent patch onto uncommitted state.
+   there is no silent patch onto uncommitted state. A worktree created with
+   `carry_base=true` is the one exception: its base is expected to hold the
+   carried state, and the land checks that the base still holds it.
 3. Everything inside the worktree is staged with `git add -A` (the worktree
    is isolated and single-task), so the patch covers **committed, staged,
    unstaged, and untracked** work. A staging failure is a blocker. A worktree
@@ -122,6 +126,32 @@ auto-merges and never removes the worktree; removal stays explicit. A
 successful `land` resets the worktree, so `remove` normally succeeds without
 a manual reset; if the reset itself failed, `remove` accepts
 `discard=true` only for a worktree already marked `landed`.
+
+### Carrying a dirty base (`carry_base`)
+
+A dirty base is refused by default, and the refusal names this escape hatch.
+`create` with `carry_base=true` snapshots the base instead of refusing it:
+
+1. The uncommitted state is captured through a **temporary index**
+   (`read-tree HEAD` + `add -A` + `write-tree` + `commit-tree`): a commit
+   object that touches neither the working tree, nor the user's index, nor
+   the ref namespace. Nothing is committed, stashed, or reverted on the base.
+   The snapshot holds the tracked changes *and* the untracked files, minus
+   the ignored ones, because a worker needs the files the base actually has.
+2. The worktree is created **at that snapshot**
+   (`git worktree add --detach <path> <snapshot>`), so the worker starts from
+   the base's real content and the worktree itself is clean.
+3. The base keeps its own uncommitted state, untouched. The snapshot is
+   recorded in the worktree registry next to the task, together with the
+   original index state, so a failed land can restore the exact split.
+
+`land` on a carried worktree adds the task's work *on top of* the carried
+state: the patch is computed against the snapshot, so it applies onto the
+dirty base. A failed land restores the base exactly — same files, same
+staged/unstaged split, the user's untracked files untouched. If the base
+moved on after the carry, the land is refused (`worktree.base_changed`)
+instead of overwriting newer work. `commit=true` commits only the landed
+paths, so the carried work is never swept into the harness commit.
 
 ## 3. Worktree-aware checks
 

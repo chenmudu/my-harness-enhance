@@ -1132,3 +1132,106 @@ test('Qoder PostToolUse tells the conductor to land a changed code worktree', ()
   execFileSync('git', ['-C', created.path, 'reset', '--hard'], { stdio: 'ignore' });
   removeWorktree(root, 'T1');
 });
+
+test('a dirty base is refused by default and names the carry escape hatch', () => {
+  const root = makeRepo();
+  write(root, 'src/app.js', 'export const v = 2;\n');
+  const refused = createWorktree(root, 'task-dirty');
+  assert.equal(refused.ok, false);
+  assert.equal(refused.rule, 'worktree.dirty');
+  assert.match(refused.blocker, /carry_base/);
+});
+
+test('carry_base=true starts the worktree from the base uncommitted state', () => {
+  const root = makeRepo();
+  write(root, 'src/app.js', 'export const v = 2;\n');
+  const created = createWorktree(root, 'task-carry', { carryBase: true });
+  assert.equal(created.ok, true, created.blocker);
+  assert.equal(
+    fs.readFileSync(path.join(created.path, 'src', 'app.js'), 'utf8'),
+    'export const v = 2;\n',
+  );
+  assert.equal(gitAt(created.path, 'status', '--porcelain').trim(), '');
+  // The base keeps its own uncommitted state, untouched.
+  assert.equal(fs.readFileSync(path.join(root, 'src', 'app.js'), 'utf8'), 'export const v = 2;\n');
+  assert.match(gitAt(root, 'status', '--porcelain'), /src\/app\.js/);
+});
+
+test('land adds the task work on top of the carried state', () => {
+  const root = makeRepo();
+  writeBrief(root, buildBrief(root, { profile: 'code', ownership: ['src/**'], checks: ['scope'] }));
+  write(root, 'src/app.js', 'export const v = 2;\n');
+  const created = createWorktree(root, 'task-carry-land', { carryBase: true });
+  assert.equal(created.ok, true, created.blocker);
+  write(created.path, 'src/app.js', 'export const v = 3;\n');
+  write(created.path, 'src/extra.js', 'export const extra = 1;\n');
+
+  const landed = landWorktree(root, 'task-carry-land');
+  assert.equal(landed.ok, true, landed.blocker);
+  assert.equal(fs.readFileSync(path.join(root, 'src', 'app.js'), 'utf8'), 'export const v = 3;\n');
+  assert.ok(fs.existsSync(path.join(root, 'src', 'extra.js')));
+  // The base is still uncommitted: carrying never commits for the user.
+  assert.equal(gitAt(root, 'rev-list', '--count', 'HEAD').trim(), '1');
+  assert.match(gitAt(root, 'status', '--porcelain'), /src\/app\.js/);
+});
+
+test('a failed land restores the carried base exactly', () => {
+  const root = makeRepo();
+  writeBrief(root, buildBrief(root, { profile: 'code', ownership: ['docs/**'], checks: ['scope'] }));
+  write(root, 'src/app.js', 'export const v = 2;\n');
+  const before = gitAt(root, 'status', '--porcelain', '--untracked-files=all');
+  const created = createWorktree(root, 'task-carry-fail', { carryBase: true });
+  assert.equal(created.ok, true, created.blocker);
+  write(created.path, 'src/app.js', 'export const v = 3;\n');
+  write(created.path, 'src/rogue.js', 'nope\n');
+
+  const failed = landWorktree(root, 'task-carry-fail');
+  assert.equal(failed.ok, false);
+  assert.equal(failed.rule, 'worktree.checks_failed');
+  assert.equal(failed.reverted, true);
+  assert.equal(gitAt(root, 'status', '--porcelain', '--untracked-files=all'), before);
+  assert.equal(fs.readFileSync(path.join(root, 'src', 'app.js'), 'utf8'), 'export const v = 2;\n');
+  assert.ok(!fs.existsSync(path.join(root, 'src', 'rogue.js')));
+});
+
+test('land refuses a base that moved on after the carry', () => {
+  const root = makeRepo();
+  write(root, 'src/app.js', 'export const v = 2;\n');
+  const created = createWorktree(root, 'task-carry-moved', { carryBase: true });
+  assert.equal(created.ok, true, created.blocker);
+  write(created.path, 'src/app.js', 'export const v = 3;\n');
+  write(root, 'src/app.js', 'export const v = 99;\n');
+
+  const landed = landWorktree(root, 'task-carry-moved');
+  assert.equal(landed.ok, false);
+  assert.equal(landed.rule, 'worktree.base_changed');
+  assert.equal(fs.readFileSync(path.join(root, 'src', 'app.js'), 'utf8'), 'export const v = 99;\n');
+});
+
+test('MCP enhance_worktree carries a dirty base only when asked', () => {
+  const root = makeRepo();
+  writePlan(root, [{ id: 'task-carry-rpc', title: 'task', status: 'pending' }], { replace: true });
+  write(root, 'src/app.js', 'export const v = 2;\n');
+
+  const refusedRpc = runRpc(root, [
+    rpcInit(),
+    rpcCall(2, 'enhance_worktree', { action: 'create', task_id: 'task-carry-rpc' }),
+  ]);
+  const refused = payload(refusedRpc.find((item) => item.id === 2));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.rule, 'worktree.dirty');
+  assert.match(refused.blocker, /carry_base/);
+
+  const carriedRpc = runRpc(root, [
+    rpcInit(),
+    rpcCall(2, 'enhance_worktree', { action: 'create', task_id: 'task-carry-rpc', carry_base: true }),
+  ]);
+  const carried = payload(carriedRpc.find((item) => item.id === 2));
+  assert.equal(carried.ok, true, carried.blocker);
+  assert.equal(
+    fs.readFileSync(path.join(carried.path, 'src', 'app.js'), 'utf8'),
+    'export const v = 2;\n',
+  );
+  assert.equal(gitAt(carried.path, 'status', '--porcelain').trim(), '');
+  assert.match(gitAt(root, 'status', '--porcelain'), /src\/app\.js/);
+});
