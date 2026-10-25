@@ -12,6 +12,7 @@ import {
   isAllowedConductorTool,
   modelOf,
   projectGateReason,
+  stampWorkerProvenance,
   toolInputOf,
   toolNameOf,
   verificationGateReason,
@@ -26,6 +27,7 @@ import {
   writeLastCheck,
   writePlan,
 } from '../src/core/store.mjs';
+import { putArtifact } from '../src/core/artifacts.mjs';
 
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
   path.join(os.tmpdir(), 'mhe-policy-home-'),
@@ -265,4 +267,20 @@ test('verification gate blocks a verification worker until a check ran', () => {
 
   writeLastCheck(root, { ok: true, at: new Date(Date.now() + 1000).toISOString(), findings: [] });
   assert.equal(verificationGateReason(root, input, ''), '');
+});
+
+test('a worker envelope is stamped as a claim, with missing artifacts named', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-provenance-'));
+  initStore(root);
+  const ok = putArtifact(root, { content: 'evidence body', kind: 'log' });
+  const stamped = stampWorkerProvenance(root, {
+    status: 'ok',
+    check_result: { ok: true, checker: 'command:test' },
+    artifacts: [{ handle: ok.handle, kind: 'log' }, { handle: 'deadbeefdeadbeef', kind: 'log' }],
+    evidence: [{ handle: 'src/app.js', note: 'path, not a handle' }],
+  });
+  assert.equal(stamped.check_result.source, 'worker');
+  assert.equal(stamped.provenance.artifacts_checked, 2);
+  assert.deepEqual(stamped.provenance.artifacts_missing, ['deadbeefdeadbeef']);
+  assert.equal(stamped.status, 'ok');
 });

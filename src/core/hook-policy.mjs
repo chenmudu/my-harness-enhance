@@ -4,6 +4,7 @@ import { canonicalPath, resolveProject } from './state-root.mjs';
 import { readBrief, readJobs, readLastCheck, readSessions, readWorktrees, storePaths } from './store.mjs';
 import { roleHintForAgent } from './capabilities.mjs';
 import { checkTaskDependencies } from './worktree.mjs';
+import { isHandle, readArtifactIndex } from './artifacts.mjs';
 
 export const NATIVE_TASK_TOOLS = new Set(['TaskCreate', 'TaskGet', 'TaskUpdate', 'TaskList']);
 export const DELEGATION_TOOLS = new Set(['Agent', 'Task']);
@@ -229,6 +230,35 @@ export function logError(root, event, error) {
 
 export function writeJson(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+/**
+ * Provenance stamp for a worker envelope: a worker's own `check_result` is a
+ * claim, never a harness verification, and an artifact handle it cites has to
+ * exist. Missing handles are recorded, not rejected, so the conductor can see
+ * which evidence it cannot open.
+ */
+export function stampWorkerProvenance(root, envelope) {
+  if (!envelope || typeof envelope !== 'object') return envelope;
+  const next = { ...envelope };
+  if (next.check_result && typeof next.check_result === 'object') {
+    next.check_result = { ...next.check_result, source: 'worker' };
+  }
+  const artifacts = Array.isArray(next.artifacts) ? next.artifacts : [];
+  if (artifacts.length) {
+    const index = readArtifactIndex(root);
+    const handles = index.artifacts || {};
+    const missing = artifacts
+      .map((entry) => String(entry?.handle || ''))
+      .filter((handle) => isHandle(handle) && !handles[handle])
+      .slice(0, 5);
+    next.provenance = {
+      ...(next.provenance || {}),
+      artifacts_checked: artifacts.length,
+      artifacts_missing: missing,
+    };
+  }
+  return next;
 }
 
 export function writeText(value) {

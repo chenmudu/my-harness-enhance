@@ -122,6 +122,11 @@ pending and are reported in `task_ids_blocked_by_land`. Only
 - Workers are leaves. The conductor is the only router.
 - `check_result` in the worker envelope is advisory; `enhance_check` / `land` is
   the authoritative result. A worker can never mark its own plan task complete.
+  Every envelope is stamped `check_result.source: worker`, and the harness
+  stamps its own `last-check.json` with `source: harness`, so the two can never
+  be read as the same fact. Artifact handles a worker cites are checked against
+  the store; missing ones are listed in `provenance.artifacts_missing` instead of
+  being silently accepted.
 - Do not dispatch a verification worker before a deterministic check, and do
   not replace a misconfigured check with a worker; fix the brief and rerun.
 

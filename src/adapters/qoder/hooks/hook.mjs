@@ -51,6 +51,7 @@ import {
   readStdin,
   roleFor,
   sessionIsConductor,
+  stampWorkerProvenance,
   toolNameOf,
   verificationGateReason,
   workerPolicy,
@@ -346,6 +347,9 @@ async function onSubagentStop(payload, root, config) {
       : artifactSummary(`invalid worker result: ${parsed.errors.join('; ')}`),
   });
   const invalid = parsed.ok ? null : invalidResultEnvelope(parsed.errors.join('; '));
+  const envelope = parsed.ok
+    ? stampWorkerProvenance(root, parsed.value)
+    : invalid;
 
   upsertJob(root, jobId, {
     agent_id: agentId,
@@ -355,7 +359,7 @@ async function onSubagentStop(payload, root, config) {
     task_id: parsed.ok ? parsed.value.task_id : '',
     status: parsed.ok ? parsed.value.status : 'invalid_result',
     result_handle: artifact.handle,
-    envelope: parsed.ok ? parsed.value : invalid,
+    envelope,
     error: parsed.ok ? '' : parsed.errors.join('; ').slice(0, 500),
     retryable: !parsed.ok,
     next: parsed.ok ? '' : invalid.next,

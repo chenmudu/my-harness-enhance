@@ -15,6 +15,7 @@ import {
   readDecisions,
   readGoal,
   readJobs,
+  readLastCheck,
   readMetrics,
   readPlan,
   readSession,
@@ -22,6 +23,7 @@ import {
   updatePlanTask,
   upsertJob,
   withLock,
+  writeLastCheck,
   writeGoal,
   writePlan,
   writeSession,
@@ -333,4 +335,12 @@ test('updating a task refreshes as_of and keeps attention fields', () => {
   const persisted = readPlan(root).tasks[0];
   assert.equal(persisted.stale, false);
   assert.equal(persisted.next_action, 'two');
+});
+
+test('a last check records who produced it', () => {
+  const root = tmpRoot();
+  initStore(root);
+  assert.equal(writeLastCheck(root, { ok: true, checked: ['docs'] }).source, 'harness');
+  assert.equal(writeLastCheck(root, { ok: false, source: 'manual' }).source, 'manual');
+  assert.equal(readLastCheck(root).source, 'manual');
 });

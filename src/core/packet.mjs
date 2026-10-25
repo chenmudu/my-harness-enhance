@@ -104,7 +104,8 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
   if (lastCheck) {
     trust.push(
       `- ${lastCheck.ok === false ? 'FAIL' : 'ok'} ${(lastCheck.checked || []).join(',') || 'no checker'}`
-      + `${lastCheck.worktree ? ' (worktree)' : ' (base)'}`,
+      + `${lastCheck.worktree ? ' (worktree)' : ' (base)'}`
+      + ` by ${lastCheck.source || 'harness'}`,
     );
   }
   trust.push('- worker summaries are claims until a check or a land passes');

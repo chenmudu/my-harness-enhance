@@ -327,8 +327,11 @@ export function readLastCheck(root, session = '') {
 
 export function writeLastCheck(root, result, session = '') {
   ensureSession(root, session);
-  atomicWrite(storePaths(root, session).lastCheck, `${JSON.stringify(result, null, 2)}\n`);
-  return result;
+  // Provenance: a last check is written by the harness (enhance_check, land) or
+  // by an explicit caller; a worker's self-report never lands here.
+  const record = { ...result, source: String(result?.source || 'harness') };
+  atomicWrite(storePaths(root, session).lastCheck, `${JSON.stringify(record, null, 2)}\n`);
+  return record;
 }
 
 export function updatePlanTask(root, id, patch = {}, session = '') {

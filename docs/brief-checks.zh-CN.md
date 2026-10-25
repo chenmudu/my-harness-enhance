@@ -122,6 +122,11 @@ pending，并在 `task_ids_blocked_by_land` 中上报。只有
 - worker 都是叶子节点。conductor 是唯一的路由者。
 - `check_result` 在 worker envelope 中仅供参考；`enhance_check` / `land` 才是
   权威结果。worker 永远不能把自己的 plan 任务标记为 complete。
+  每个 envelope 都会被标上 `check_result.source: worker`，
+  而 harness 自己写的 `last-check.json` 标 `source: harness`，
+  两者不会被读成同一个事实。worker 引用的 artifact handle 会到 store 里核对，
+  缺失的会列进 `provenance.artifacts_missing`，
+  而不是被静默接受。
 - 不要在确定性检查之前派发验证 worker，也不要用 worker 去替代
   一个配置错误的检查；修正 brief 后重新运行。
 
