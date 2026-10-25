@@ -53,6 +53,12 @@
 worker prompt 最前面的那两行派发头部（`task_id: <id>` 和
 `worktree: <path>`），必须一字不差。
 
+走 MCP 时返回里会去掉内部 git 状态（`carry`、时间戳、`base`），
+`land` 默认也不回传 patch 文本，除非 `include_patch=true`：
+conductor 靠计数、文件路径和检查结果决策，patch 本身留在磁盘上。
+plan 的写入同样只回执——任务数、各状态计数、下一个任务和 id 列表，
+而不是把每个任务重述一遍。
+
 `diff` 返回有界（bounded）输出：`git diff <creation-base>`（已提交、已暂存、
 未暂存，以及 intent-to-add 的未跟踪改动）以 ~40k 字符封顶，外加
 最多 200 条的变更文件列表，并带有一个 `truncated` 标志。已提交的

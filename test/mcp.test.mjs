@@ -178,6 +178,41 @@ test('MCP enhance_plan accepts id-only tasks and falls back to id as title', () 
   assert.equal(plan.tasks[0].title, 't-only');
 });
 
+test('MCP enhance_plan acknowledges a write instead of echoing the plan', () => {
+  const root = makeRoot();
+  const tasks = Array.from({ length: 8 }, (_, index) => ({
+    id: `t${index + 1}`,
+    title: `task ${index + 1}`,
+    status: index === 0 ? 'in_progress' : 'pending',
+    acceptance: 'a'.repeat(120),
+  }));
+  const responses = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'enhance_plan', arguments: { tasks, replace: true } },
+    },
+    {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'enhance_plan', arguments: {} },
+    },
+  ]);
+  const written = JSON.parse(responses.find((item) => item.id === 2).result.content[0].text);
+  const readBack = JSON.parse(responses.find((item) => item.id === 3).result.content[0].text);
+  assert.equal(written.tasks, 8);
+  assert.equal(written.next.id, 't1');
+  assert.deepEqual(written.ids.slice(0, 3), ['t1', 't2', 't3']);
+  assert.equal(written.acceptance, undefined);
+  assert.equal(readBack.tasks.length, 8);
+  const writeChars = responses.find((item) => item.id === 2).result.content[0].text.length;
+  const readChars = responses.find((item) => item.id === 3).result.content[0].text.length;
+  assert.ok(writeChars * 4 < readChars, `write ${writeChars} vs read ${readChars}`);
+});
+
 test('MCP capabilities include process diagnostics', () => {
   const root = makeRoot();
   const responses = runRpc(root, [

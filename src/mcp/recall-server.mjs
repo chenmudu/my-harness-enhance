@@ -262,6 +262,10 @@ const TOOLS = [
           type: 'boolean',
           description: 'Remove action only: discard uncommitted changes in a worktree whose status is landed (default false). Refused for unlanded worktrees.',
         },
+        include_patch: {
+          type: 'boolean',
+          description: 'Land action only: include the applied patch text in the response (default false). The patch otherwise stays on disk and is summarized by counts and file paths.',
+        },
       },
       required: ['action'],
       additionalProperties: false,
@@ -347,11 +351,29 @@ function toolEnhanceBrief(args = {}) {
   return jsonResult(writeBrief(root, brief, session));
 }
 
+function planSummary(plan) {
+  const tasks = plan.tasks || [];
+  const counts = {};
+  for (const task of tasks) counts[task.status] = (counts[task.status] || 0) + 1;
+  const next = tasks.find((task) => task.status === 'in_progress')
+    || tasks.find((task) => task.status === 'pending');
+  return {
+    ok: true,
+    tasks: tasks.length,
+    counts,
+    next: next ? { id: next.id, title: next.title, status: next.status } : null,
+    ids: tasks.map((task) => task.id),
+  };
+}
+
 function toolEnhancePlan(args = {}) {
   const { root, session } = contextFor(args);
   if (!Array.isArray(args.tasks)) return jsonResult(readPlan(root, session));
   const plan = writePlan(root, args.tasks, { replace: Boolean(args.replace) }, session);
-  return jsonResult(plan);
+  // A write acknowledges the change instead of echoing every task back: the
+  // capsule already carries the plan, and the echo was the conductor's largest
+  // single MCP cost.
+  return jsonResult(planSummary(plan));
 }
 
 function toolEnhanceDecide(args = {}) {
@@ -511,6 +533,19 @@ function toolEnhanceCheck(args = {}) {
   });
 }
 
+function trimWorktreeResult(result, { includePatch = false } = {}) {
+  if (!result || typeof result !== 'object') return result;
+  const {
+    patch, carry, created_at, updated_at, base, ...rest
+  } = result;
+  if (!includePatch) rest.patch_omitted = typeof patch === 'string' && patch.length > 0;
+  else rest.patch = patch;
+  if (rest.commit && typeof rest.commit === 'object' && !rest.commit.created) {
+    rest.commit = { created: false };
+  }
+  return rest;
+}
+
 function toolEnhanceWorktree(args = {}) {
   const { root, session } = contextFor(args);
   const action = String(args.action || '');
@@ -520,11 +555,12 @@ function toolEnhanceWorktree(args = {}) {
     return textResult(`unsupported action: ${action || '(missing)'}; use create, list, diff, land, or remove`, true);
   }
   if (!taskId) return textResult(`task_id is required for action: ${action}`, true);
+  const includePatch = Boolean(args.include_patch);
   if (action === 'create') {
     const gate = checkTaskDependencies(root, taskId, session);
     if (!gate.ok) return jsonResult(gate, true);
     const created = createWorktree(root, taskId, { session, carryBase: Boolean(args.carry_base) });
-    return jsonResult(created, !created.ok);
+    return jsonResult(trimWorktreeResult(created), !created.ok);
   }
   if (action === 'diff') return jsonResult(diffWorktree(root, taskId, { session }));
   if (action === 'land') {
@@ -533,7 +569,7 @@ function toolEnhanceWorktree(args = {}) {
       commit: Boolean(args.commit),
       session,
     });
-    return jsonResult(landed, !landed.ok);
+    return jsonResult(trimWorktreeResult(landed, { includePatch }), !landed.ok);
   }
   return jsonResult(removeWorktree(root, taskId, { discard: Boolean(args.discard), session }));
 }

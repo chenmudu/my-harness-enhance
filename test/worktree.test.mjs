@@ -313,6 +313,12 @@ test('MCP enhance_worktree: create is gated, then create/diff/remove over RPC', 
   const landedValue = payload(landResp);
   assert.equal(landedValue.ok, true, landedValue.blocker);
   assert.deepEqual([...landedValue.applied_files].sort(), ['landed.txt', 'src/app.js']);
+  // The patch text stays off the conductor's wire: counts and paths are enough
+  // to decide, and the patch itself is still on disk.
+  assert.equal(landedValue.patch, undefined);
+  assert.equal(landedValue.patch_omitted, true);
+  assert.equal(landedValue.base, undefined);
+  assert.equal(landedValue.carry, undefined);
   assert.ok(fs.existsSync(path.join(root, 'landed.txt')));
   assert.equal(fs.readFileSync(path.join(root, 'src', 'app.js'), 'utf8'), 'export const v = 9;\n');
   assert.equal(landRpc.find((item) => item.id === 3).result.isError, true);

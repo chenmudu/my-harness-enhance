@@ -53,6 +53,12 @@ Creation runs `git worktree add --detach <path> HEAD` and returns
 two-line dispatch header (`task_id: <id>` and `worktree: <path>`) to place at
 the top of the worker prompt.
 
+Over MCP the response drops internal git state (`carry`, timestamps, `base`),
+and `land` omits the patch text unless `include_patch=true`: the conductor
+decides from counts, file paths, and check results, and the patch stays on
+disk. A plan write is acknowledged the same way — task count, status counts,
+the next task, and the ids — instead of echoing every task back.
+
 `diff` returns bounded output: `git diff <creation-base>` (committed, staged,
 unstaged, and intent-to-add untracked work) capped at ~40k chars, plus the
 changed-file list capped at 200 entries, with a `truncated` flag. Committed
