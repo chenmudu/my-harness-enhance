@@ -6,7 +6,7 @@ import {
   readGlobalConfig,
 } from '../../../core/global.mjs';
 import { detectConfigDir, syncCapabilities } from '../install.mjs';
-import { conductorInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
+import { conductorInjection, conductorTurnInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
 import {
   compactEnvelope,
   extractText,
@@ -190,14 +190,18 @@ async function onUserPromptSubmit(payload, root, config) {
     writeSession(root, { fresh: false }, session);
   }
   const capsule = writeCapsule(root, { session });
+  const injected = conductorTurnInjection(root, { session });
   recordMetric(root, {
     event: 'prompt_submitted',
     role: 'conductor',
     prompt_chars: prompt.length,
     goal_chars: String(readGoal(root, session).text || '').length,
     capsule_tokens: estimateTokens(capsule),
+    injected_chars: injected.text.length,
+    injected_tokens: injected.tokens,
+    changed_sections: injected.changed.join(','),
   }, session);
-  writeText(conductorInjection(root, { contractMode: 'injected', session }));
+  writeText(injected.text);
   log(root, { event: EVENT, role: 'conductor', prompt_chars: prompt.length }, config);
 }
 

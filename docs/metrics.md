@@ -73,7 +73,7 @@ raw summary):
 | Event | Recorded fields |
 |---|---|
 | `session_start` | model, source, session id, `session`, capsule chars/tokens |
-| `prompt_submitted` | prompt chars, goal chars, capsule tokens |
+| `prompt_submitted` | prompt chars, goal chars, capsule tokens, injected chars/tokens, changed sections |
 | `dispatch` / `tool_denied` | tool, allow, gate |
 | `job_start` / `job_stop` | agent type, job id, status, valid, retryable, result tokens |
 | `agent_result` | valid, status, raw and compact envelope tokens |

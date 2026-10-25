@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { atomicWrite, loadConfig } from './config.mjs';
 import { estimateTokens } from './metrics.mjs';
 import { clipText, safeEnd } from './text.mjs';
@@ -235,7 +236,110 @@ export function conductorInjection(root, {
   const contractPolicy = contractMode === 'injected'
     ? '- The adapter injects the worker contract at SubagentStart. Do not call enhance_worker_contract and do not paste the contract into the prompt.'
     : '- This adapter does not inject worker contracts. Call enhance_worker_contract and put its full output, including the marker, in every Agent/Task prompt.';
-  return `${CONDUCTOR_POLICY}${contractPolicy}\n${capsule}`;
+  const text = `${CONDUCTOR_POLICY}${contractPolicy}\n${capsule}`;
+  recordInjection(root, session, capsule);
+  return text;
+}
+
+/** Split a capsule into its `## TITLE` sections. */
+export function capsuleSections(text) {
+  const sections = [];
+  let current = null;
+  for (const line of String(text ?? '').split('\n')) {
+    const heading = line.match(/^## (.+)$/);
+    if (heading) {
+      if (current) sections.push(current);
+      current = { title: heading[1].trim(), lines: [] };
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  if (current) sections.push(current);
+  return sections.map((item) => ({
+    title: item.title,
+    body: item.lines.join('\n').trim(),
+  }));
+}
+
+function digest(text) {
+  return crypto.createHash('sha1').update(String(text ?? '')).digest('hex').slice(0, 12);
+}
+
+export function capsuleHashes(text) {
+  const hashes = {};
+  for (const item of capsuleSections(text)) hashes[item.title] = digest(item.body);
+  return hashes;
+}
+
+function recordInjection(root, session, capsuleText) {
+  atomicWrite(
+    storePaths(root, session).injection,
+    `${JSON.stringify({ at: new Date().toISOString(), sections: capsuleHashes(capsuleText) }, null, 2)}\n`,
+  );
+}
+
+function previousInjection(root, session) {
+  try {
+    const value = JSON.parse(fs.readFileSync(storePaths(root, session).injection, 'utf8'));
+    return value && typeof value.sections === 'object' ? value.sections : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Per-turn injection: a short anchor plus only the sections that changed since
+ * the last injection. The full policy and capsule are injected at session start
+ * and after every compaction; re-sending them on every user turn is redundant
+ * context, because the earlier copy stays in the transcript.
+ */
+export function conductorTurnInjection(root, {
+  maxTokens = null,
+  session = '',
+  contractMode = 'injected',
+} = {}) {
+  const { config } = loadConfig(root);
+  const budget = maxTokens ?? config.context.maxCapsuleTokens ?? 1800;
+  const capsule = buildCapsule(root, { maxTokens: budget, session });
+  const previous = previousInjection(root, session);
+  const sections = capsuleSections(capsule);
+  const hashes = {};
+  const changed = [];
+  for (const item of sections) {
+    const value = digest(item.body);
+    hashes[item.title] = value;
+    if (previous[item.title] !== value) changed.push(item);
+  }
+  const removed = Object.keys(previous).filter((title) => !(title in hashes));
+  const contractPolicy = contractMode === 'injected'
+    ? '- Worker contracts are injected at SubagentStart; do not call enhance_worker_contract.'
+    : '- This adapter does not inject worker contracts; call enhance_worker_contract and paste it into every Agent/Task prompt.';
+  const anchor = [
+    '[MY-HARNESS-ENHANCE TURN ANCHOR]',
+    `project: ${root}`,
+    session ? `session: ${session}` : '',
+    'The conductor policy injected at session start still applies.',
+    contractPolicy,
+    changed.length
+      ? `State changed since your last turn (${changed.map((item) => item.title).join(', ')}).`
+      : 'State is unchanged since your last turn.',
+  ].filter(Boolean).join('\n');
+  const body = changed.length
+    ? `\n\n${changed.map((item) => `## ${item.title}\n${item.body}`).join('\n\n')}`
+    : '';
+  const tail = removed.length ? `\n\nRemoved sections: ${removed.join(', ')}` : '';
+  const text = `${anchor}${body}${tail}\n`;
+  atomicWrite(
+    storePaths(root, session).injection,
+    `${JSON.stringify({ at: new Date().toISOString(), sections: hashes }, null, 2)}\n`,
+  );
+  return {
+    text,
+    changed: changed.map((item) => item.title),
+    removed,
+    tokens: estimateTokens(text),
+    fullTokens: estimateTokens(capsule),
+  };
 }
 
 // Backward-compatible alias for callers from the earlier version.

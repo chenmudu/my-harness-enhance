@@ -261,12 +261,17 @@ capsule 是状态投影，不是注意力包：
 因此 `docs/metrics.md` 里的注意力密度目标，
 这一版设计还没有达到。
 
+每一轮都不会重发全量：会话开始和压缩时注入完整策略与 capsule，
+普通回合只收到短锚，加上内容发生变化的那几个段落。
+在 14 个任务的 plan 上实测：
+完整 1,358 tokens，无变化 73，一个任务变动后 153。
+
 ## 4. Hooks（Qoder adapter）
 
 | 事件 | 角色 |
 |---|---|
 | `SessionStart` | 识别 conductor 会话；注入策略 + capsule；在 compact/resume 时重新注入 |
-| `UserPromptSubmit` | 设定首个 goal；把后续追问写入日志；重新注入完整策略和 capsule（目标：短锚 + 状态差异） |
+| `UserPromptSubmit` | 设定首个 goal；把后续追问写入日志；注入短锚，加上发生变化的状态段落 |
 | `PreToolUse` | conductor 工具白名单；按 agent 类型套用原生 worker 策略（readonly/leaf/notools/lead）；subagent 白名单 |
 | `SubagentStart` | 创建 job；注入角色 + worker 契约 + goal/验收标准 |
 | `SubagentStop` | 解析/存储 envelope；更新 job |

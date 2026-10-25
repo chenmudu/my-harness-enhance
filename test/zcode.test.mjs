@@ -572,12 +572,13 @@ test('subagent SessionStart stays silent and never marks the main role', () => {
   assert.equal(fs.existsSync(storePaths(root).session), false);
 });
 
-test('UserPromptSubmit sets the goal and injects the capsule as JSON', () => {
+test('UserPromptSubmit sets the goal and injects the turn anchor as JSON', () => {
   const root = setupHookRoot();
   const result = runHook(root, 'UserPromptSubmit', { prompt: 'Add a health endpoint.' });
   const json = parseJson(result.stdout);
   assert.equal(json.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-  assert.match(json.hookSpecificOutput.additionalContext, /CAPSULE/);
+  assert.match(json.hookSpecificOutput.additionalContext, /TURN ANCHOR/);
+  assert.match(json.hookSpecificOutput.additionalContext, /Add a health endpoint/);
   assert.equal(readGoal(root).text, 'Add a health endpoint.');
 });
 

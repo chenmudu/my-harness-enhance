@@ -112,8 +112,21 @@ test('UserPromptSubmit stores the first prompt as the goal', () => {
     prompt: 'Add a health endpoint.',
   });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /CAPSULE/);
+  assert.match(result.stdout, /TURN ANCHOR/);
+  assert.match(result.stdout, /## GOAL/);
   assert.equal(readGoal(root).text, 'Add a health endpoint.');
+});
+
+test('a later turn injects only the sections that changed', () => {
+  const root = setupRoot();
+  runHook(root, 'SessionStart', { model: 'qfmodel', source: 'startup' });
+  const first = runHook(root, 'UserPromptSubmit', { model: 'qfmodel', prompt: 'Add a health endpoint.' });
+  assert.match(first.stdout, /State changed since your last turn/);
+
+  const second = runHook(root, 'UserPromptSubmit', { model: 'qfmodel', prompt: '继续' });
+  assert.match(second.stdout, /State is unchanged since your last turn/);
+  assert.doesNotMatch(second.stdout, /## PLAN/);
+  assert.ok(second.stdout.length < first.stdout.length);
 });
 
 test('a new session replaces the old goal for a substantive new task', () => {

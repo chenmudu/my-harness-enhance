@@ -17,7 +17,7 @@
 //   - PostToolUse never emits updatedToolOutput; it only stores and logs.
 // All emitted output is valid ZCode hook JSON.
 import { ensureState, loadConfig } from '../../core/config.mjs';
-import { conductorInjection, writeCapsule } from '../../core/capsule.mjs';
+import { conductorInjection, conductorTurnInjection, writeCapsule } from '../../core/capsule.mjs';
 import { extractText, invalidResultEnvelope, parseEnvelope } from '../../core/contract.mjs';
 import { byteLength } from '../../core/metrics.mjs';
 import { putArtifact } from '../../core/artifacts.mjs';
@@ -212,7 +212,7 @@ async function onUserPromptSubmit(payload, root, config) {
     writeSession(root, { fresh: false });
   }
   writeCapsule(root);
-  writeJson(hookJson('UserPromptSubmit', { additionalContext: conductorInjection(root) }));
+  writeJson(hookJson('UserPromptSubmit', { additionalContext: conductorTurnInjection(root).text }));
 }
 
 async function onPreToolUse(payload, root, config) {

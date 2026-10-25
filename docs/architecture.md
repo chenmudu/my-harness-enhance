@@ -261,12 +261,17 @@ needs, and nothing measures whether an injected block was relevant. The
 attention-density target in `docs/metrics.md` is therefore not met by this
 design yet.
 
+Injection is not re-sent in full on every turn: session start and compaction
+inject the whole policy and capsule, while a normal turn receives a short
+anchor plus only the sections whose content changed (measured on a 14-task
+plan: 1,358 tokens full, 73 unchanged, 153 after one task moved).
+
 ## 4. Hooks (Qoder adapter)
 
 | Event | Role |
 |---|---|
 | `SessionStart` | detect conductor session; inject policy + capsule; on compact/resume re-inject |
-| `UserPromptSubmit` | set first goal; journal follow-ups; re-inject the full policy and capsule (target: short anchor plus a state delta) |
+| `UserPromptSubmit` | set first goal; journal follow-ups; inject a short anchor plus only the state sections that changed |
 | `PreToolUse` | conductor tool allowlist; native worker policy by agent type (readonly/leaf/notools/lead); subagent allowlist |
 | `SubagentStart` | create job; inject role + worker contract + goal/acceptance |
 | `SubagentStop` | parse/store envelope; update job |

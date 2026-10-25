@@ -70,6 +70,7 @@ export function storePaths(root, session = '') {
     jobs: path.join(base, 'jobs.json'),
     session: path.join(base, 'session.json'),
     capsule: path.join(base, 'capsule.md'),
+    injection: path.join(base, 'injection.json'),
     worktrees: path.join(base, 'worktrees.json'),
   };
 }

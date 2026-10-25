@@ -73,7 +73,7 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | 事件 | 记录字段 |
 |---|---|
 | `session_start` | model、source、session id、`session`、capsule 字符/tokens |
-| `prompt_submitted` | prompt 字符数、goal 字符数、capsule tokens |
+| `prompt_submitted` | prompt 字符数、goal 字符数、capsule tokens、注入字符/tokens、变化段落 |
 | `dispatch` / `tool_denied` | tool、allow、gate |
 | `job_start` / `job_stop` | agent 类型、job id、status、valid、retryable、结果 tokens |
 | `agent_result` | valid、status、原始与压缩后 envelope tokens |
