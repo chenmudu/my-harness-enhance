@@ -13,6 +13,7 @@ import {
   prepareWorkspace,
   runAb,
   runFixtureCheck,
+  summarizeAb,
   summarizeTurns,
   turnEnv,
 } from '../src/bench/ab.mjs';
@@ -132,6 +133,28 @@ test('turn summary tracks context growth and hook denials', () => {
   assert.equal(summary.context.max, 0.4);
   assert.equal(summary.checks_ok, 1);
   assert.equal(summary.hooks.denials.allowlist, 1);
+});
+
+test('a turn the runner cut at its limit is counted as a timeout, not a CLI crash', () => {
+  const turns = summarizeTurns([
+    { cli_ok: true, duration_ms: 10, context_usage_ratio: 0.1, check: { ok: true } },
+    { cli_ok: false, timed_out: true, duration_ms: 300000, check: { ok: true } },
+    { cli_ok: false, timed_out: false, duration_ms: 12, check: { ok: true } },
+  ]);
+  assert.equal(turns.cli_failed, 2);
+  assert.equal(turns.turn_timeouts, 1);
+
+  const summary = summarizeAb(
+    [{
+      arm: 'treatment',
+      repeat: 1,
+      session_id: 's1',
+      summary: turns,
+    }],
+    { model: 'Qwen3.8-Flash', turns: 3, repeats: 1 },
+  );
+  assert.equal(summary.arms.treatment.turn_timeouts, 1);
+  assert.equal(summary.arms.treatment.cli_failures, 2);
 });
 
 test('ab run writes a summary and refuses a non-empty output dir', async () => {

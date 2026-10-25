@@ -368,6 +368,7 @@ export function summarizeTurns(turns = []) {
     turns: turns.length,
     cli_ok: turns.filter((turn) => turn.cli_ok).length,
     cli_failed: turns.filter((turn) => !turn.cli_ok).length,
+    turn_timeouts: turns.filter((turn) => turn.timed_out).length,
     duration_ms: sum,
     context: {
       first,
@@ -469,6 +470,7 @@ export function summarizeAb(runs, meta = {}) {
       runs: 0,
       turns: 0,
       cli_failures: 0,
+      turn_timeouts: 0,
       final_tests_ok: 0,
       context_delta: [],
       context_last: [],
@@ -478,6 +480,7 @@ export function summarizeAb(runs, meta = {}) {
     bucket.runs += 1;
     bucket.turns += run.summary.turns;
     bucket.cli_failures += run.summary.cli_failed;
+    bucket.turn_timeouts += run.summary.turn_timeouts || 0;
     bucket.final_tests_ok += run.summary.final_check?.ok ? 1 : 0;
     bucket.context_delta.push(run.summary.context.delta);
     bucket.context_last.push(run.summary.context.last);
@@ -491,6 +494,7 @@ export function summarizeAb(runs, meta = {}) {
       runs: bucket.runs,
       turns: bucket.turns,
       cli_failures: bucket.cli_failures,
+      turn_timeouts: bucket.turn_timeouts,
       final_tests_ok: bucket.final_tests_ok,
       context: {
         delta_avg: average(bucket.context_delta),
@@ -523,11 +527,11 @@ export function renderSummaryMarkdown(summary) {
   lines.push(`- turns per run: ${summary.turns}`);
   lines.push(`- repeats: ${summary.repeats}`);
   lines.push('');
-  lines.push('| arm | runs | turns | cli failures | final tests | ctx delta avg | ctx last avg | minutes | denials |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx delta avg | ctx last avg | minutes | denials |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const [arm, value] of Object.entries(summary.arms)) {
     lines.push(
-      `| ${arm} | ${value.runs} | ${value.turns} | ${value.cli_failures} | ` +
+      `| ${arm} | ${value.runs} | ${value.turns} | ${value.cli_failures} | ${value.turn_timeouts || 0} | ` +
       `${value.final_tests_ok}/${value.runs} | ${value.context.delta_avg ?? 'n/a'} | ` +
       `${value.context.last_avg ?? 'n/a'} | ${(value.duration_ms / 60000).toFixed(1)} | ${value.denials} |`,
     );
@@ -535,6 +539,7 @@ export function renderSummaryMarkdown(summary) {
   lines.push('');
   lines.push('Context values are the model-reported `context_usage_ratio` after each turn.');
   lines.push('Denials are hook-reported conductor or worker tool denials.');
+  lines.push('Timeouts are turns the runner cut at the per-turn limit; they are counted in cli failures too.');
   return `${lines.join('\n')}\n`;
 }
 
