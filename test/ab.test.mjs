@@ -222,6 +222,45 @@ test('a turn that stops answering is a timeout, not a silent hang', async () => 
   assert.match(stuck.error, /150ms/);
 });
 
+test('the review fixture drives a run and its answers are checked', async () => {
+  const outDir = path.join(tempDir('mhe-ab-review-'), 'run');
+  const baselineConfig = tempDir('mhe-ab-review-cfg-');
+  const result = await runAb({
+    arms: ['baseline'],
+    turns: 2,
+    repeats: 1,
+    model: 'Qwen3.8-Flash',
+    baselineConfig,
+    outDir,
+    fixtureKind: 'review',
+    runSession: ({ workspace }) => {
+      let sent = 0;
+      return {
+        send: async () => {
+          sent += 1;
+          const name = String(sent).padStart(2, '0');
+          // Deliberately wrong: the first rule always exists in the vocabulary.
+          fs.writeFileSync(path.join(workspace, 'answers', `${name}.txt`), 'off-by-one\n');
+          return {
+            event: { type: 'result', result: 'ok', duration_ms: 1, context_usage_ratio: sent * 0.1 },
+            timedOut: false,
+            error: '',
+          };
+        },
+        close: () => {},
+      };
+    },
+    log: () => {},
+  });
+  const workspace = path.join(outDir, 'runs', 'baseline-r1', 'workspace');
+  assert.ok(fs.existsSync(path.join(workspace, 'patches', '01.patch')));
+  assert.ok(!fs.existsSync(path.join(workspace, 'src', 'lib.mjs')));
+  assert.equal(result.summary.arms.baseline.turns, 2);
+  assert.equal(result.summary.arms.baseline.final_tests_ok, 0);
+  const written = JSON.parse(fs.readFileSync(path.join(outDir, 'runs', 'baseline-r1', 'result.json'), 'utf8'));
+  assert.ok(written.summary.final_check.failed >= 1);
+});
+
 test('ab run writes a summary and refuses a non-empty output dir', async () => {
   const outDir = path.join(tempDir('mhe-ab-out-'), 'run');
   const baselineConfig = tempDir('mhe-ab-baseline-');

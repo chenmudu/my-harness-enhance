@@ -173,8 +173,14 @@ Per turn the runner records the model-reported `context_usage_ratio`, the CLI
 duration, the fixture test result, and the hook counters of the treatment arm.
 The run writes `summary.json` and `summary.md` next to the raw per-run files.
 
-The fixture is a dependency-free library that grows by one function per turn,
-with one test file; the deterministic check is `node --test`.
+`--fixture-kind` picks the task shape:
+
+- `library` (default): a dependency-free library that grows by one function per
+  turn, with one test file; the deterministic check is `node --test`.
+- `review`: 15 patches, each adding a small module with exactly one planted
+  defect from a fixed vocabulary; the answer is the rule id, and the check
+  compares it with the planted value. The work is judgment over the whole hunk,
+  so a keyword search cannot shortcut it.
 
 ## Acceptance metrics
 

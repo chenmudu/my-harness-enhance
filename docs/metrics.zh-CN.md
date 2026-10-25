@@ -173,8 +173,14 @@ runner 强制遵守的规则：
 fixture 的测试结果，以及 treatment arm 的 hook 计数。
 每次运行会写出 `summary.json` 和 `summary.md`，以及每个 run 的原始文件。
 
-fixture 是一个零依赖的小库，每轮新增一个函数，
-配一个测试文件；确定性检查用 `node --test`。
+`--fixture-kind` 选择任务形状：
+
+- `library`（默认）：一个零依赖的小库，每轮新增一个函数，
+  配一个测试文件；确定性检查用 `node --test`。
+- `review`：15 个 patch，每个新增一个小模块，
+  里面恰好埋一个来自固定词表的缺陷；
+  答案是规则 id，检查器把它和埋的值比对。
+  这项工作需要对整个 hunk 做判断，关键词搜索抄不了近路。
 
 ## 验收指标
 

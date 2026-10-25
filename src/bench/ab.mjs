@@ -7,6 +7,7 @@ import { atomicWrite, readJson } from '../core/fs-util.mjs';
 import { canonicalPath, projectKey } from '../core/state-root.mjs';
 import { sessionKey } from '../core/store.mjs';
 import { summarizeMetrics } from '../core/metrics.mjs';
+import { buildReviewFixture, checkReviewAnswers, reviewPrompts } from './review-fixture.mjs';
 
 export const DEFAULT_MODEL = 'Qwen3.8-Flash';
 export const DEFAULT_TURNS = 15;
@@ -713,7 +714,8 @@ export async function runAb(options = {}) {
   const turns = Math.min(Math.max(Number.parseInt(options.turns, 10) || DEFAULT_TURNS, 1), STEPS.length);
   const repeats = Math.max(Number.parseInt(options.repeats, 10) || DEFAULT_REPEATS, 1);
   const model = options.model || DEFAULT_MODEL;
-  const prompts = longHorizonPrompts(turns);
+  const fixtureKind = options.fixtureKind === 'review' ? 'review' : 'library';
+  const prompts = fixtureKind === 'review' ? reviewPrompts(turns) : longHorizonPrompts(turns);
   const outDir = path.resolve(options.outDir || defaultOutDir());
   const log = options.log || ((line) => process.stdout.write(`${line}\n`));
 
@@ -734,8 +736,22 @@ export async function runAb(options = {}) {
     const order = repeat % 2 === 0 ? arms : [...arms].reverse();
     for (const arm of order) {
       const workspace = path.join(outDir, 'runs', `${arm}-r${repeat + 1}`, 'workspace');
-      prepareWorkspace(options.fixture, workspace);
+      let planted = null;
+      if (fixtureKind === 'review') {
+        fs.rmSync(workspace, { recursive: true, force: true });
+        fs.mkdirSync(workspace, { recursive: true });
+        planted = buildReviewFixture(workspace, { count: turns });
+      } else {
+        prepareWorkspace(options.fixture, workspace);
+      }
       log(`[ab] ${arm} repeat ${repeat + 1}/${repeats}: starting in ${workspace}`);
+      let answered = 0;
+      const runCheck = fixtureKind === 'review'
+        ? async (target) => {
+          answered += 1;
+          return checkReviewAnswers(target, planted.slice(0, answered));
+        }
+        : check;
       const run = await runArm({
         arm,
         repeat: repeat + 1,
@@ -748,7 +764,7 @@ export async function runAb(options = {}) {
         timeoutMs: Number.parseInt(options.timeoutMs, 10) || 300000,
         checkTimeoutMs: Number.parseInt(options.checkTimeoutMs, 10) || 120000,
         runSession,
-        check,
+        check: runCheck,
       });
       atomicWrite(
         path.join(outDir, 'runs', `${arm}-r${repeat + 1}`, 'result.json'),

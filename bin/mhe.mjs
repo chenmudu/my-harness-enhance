@@ -69,7 +69,8 @@ Usage:
   mhe bench [--json]
   mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir>
          [--arm both|baseline|treatment] [--turns 15] [--repeats 2]
-         [--model Qwen3.8-Flash] [--out <dir>] [--dry-run]
+         [--model Qwen3.8-Flash] [--out <dir>] [--fixture-kind library|review]
+         [--timeout-ms <ms>] [--dry-run]
   mhe demo
   mhe version | help
 
@@ -514,6 +515,7 @@ async function cmdAb(args) {
     outDir: args.out || null,
     cli: args.cli || null,
     fixture: args.fixture ? path.resolve(args.fixture) : '',
+    fixtureKind: args['fixture-kind'] || '',
     timeoutMs: args['timeout-ms'],
     checkTimeoutMs: args['check-timeout-ms'],
     dryRun: Boolean(args['dry-run']),
