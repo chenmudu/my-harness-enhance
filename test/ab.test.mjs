@@ -1,0 +1,212 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  assertIsolatedDir,
+  configHasHarness,
+  createFixture,
+  longHorizonPrompts,
+  parseCliResult,
+  parseTestCounts,
+  prepareWorkspace,
+  runAb,
+  runFixtureCheck,
+  summarizeTurns,
+  turnEnv,
+} from '../src/bench/ab.mjs';
+
+delete process.env.MY_HARNESS_ENHANCE_PROJECT;
+delete process.env.MY_HARNESS_ENHANCE_SESSION;
+delete process.env.MY_HARNESS_ENHANCE_GLOBAL;
+
+function tempDir(prefix) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+test('long-horizon prompts are ordered, numbered, and clamped to the script', () => {
+  const prompts = longHorizonPrompts(3);
+  assert.equal(prompts.length, 3);
+  assert.match(prompts[0], /^Step 1\/3:/);
+  assert.match(prompts[2], /^Step 3\/3:/);
+  assert.equal(longHorizonPrompts(99).length, 15);
+  assert.equal(longHorizonPrompts(0).length, 15);
+});
+
+test('cli result parsing ignores wrapper noise and non-result json', () => {
+  const stdout = [
+    'loading config',
+    '{"type":"system","subtype":"init"}',
+    '{"type":"result","subtype":"success","result":"OK","context_usage_ratio":0.25}',
+  ].join('\n');
+  const parsed = parseCliResult(stdout);
+  assert.equal(parsed.result, 'OK');
+  assert.equal(parsed.context_usage_ratio, 0.25);
+  assert.equal(parseCliResult('not json'), null);
+  assert.equal(parseCliResult(''), null);
+});
+
+test('test counts are read from the node test reporter summary', () => {
+  assert.deepEqual(parseTestCounts('# pass 4\n# fail 0\n'), { passed: 4, failed: 0 });
+  assert.deepEqual(parseTestCounts('ℹ pass 2\nℹ fail 1\n'), { passed: 2, failed: 1 });
+  assert.deepEqual(parseTestCounts('no summary here'), { passed: null, failed: null });
+});
+
+test('isolation guard rejects the normal harness locations', () => {
+  const home = os.homedir();
+  assert.throws(() => assertIsolatedDir(path.join(home, '.qoder-cn'), '--baseline-config'));
+  assert.throws(() => assertIsolatedDir(path.join(home, '.zcode'), '--baseline-config'));
+  assert.throws(() => assertIsolatedDir(path.join(home, '.my-harness-enhance'), '--treatment-home'));
+  assert.throws(() => assertIsolatedDir('', '--baseline-config'));
+  const isolated = tempDir('mhe-ab-isolated-');
+  assert.equal(assertIsolatedDir(isolated, '--baseline-config'), fs.realpathSync.native(isolated));
+});
+
+test('harness detection reads the qoder settings file', () => {
+  const dir = tempDir('mhe-ab-config-');
+  assert.equal(configHasHarness(dir), false);
+  fs.writeFileSync(
+    path.join(dir, 'settings.json'),
+    JSON.stringify({
+      hooks: { PreToolUse: [{ hooks: [{ command: 'node D:/repo/src/adapters/qoder/hooks/hook.mjs PreToolUse' }] }] },
+      mcpServers: { 'harness-enhance': { command: 'node' } },
+    }),
+    'utf8',
+  );
+  assert.equal(configHasHarness(dir), true);
+});
+
+test('turn env removes sdk variables and points treatment at the isolated home', () => {
+  const base = {
+    QODER_AGENT_SDK_ENTRYPOINT: 'x',
+    QODER_CONFIG_DIR: 'y',
+    MY_HARNESS_ENHANCE_HOME: 'leaked',
+    MY_HARNESS_ENHANCE_SESSION: 'leaked',
+  };
+  const treatment = turnEnv({ arm: 'treatment', sessionId: 'abc', treatmentHome: 'C:/state', base });
+  assert.equal(treatment.QODER_AGENT_SDK_ENTRYPOINT, undefined);
+  assert.equal(treatment.QODER_CONFIG_DIR, undefined);
+  assert.equal(treatment.MY_HARNESS_ENHANCE_HOME, 'C:/state');
+  assert.equal(treatment.MY_HARNESS_ENHANCE_SESSION, 'abc');
+
+  const baseline = turnEnv({ arm: 'baseline', sessionId: 'abc', treatmentHome: 'C:/state', base });
+  assert.equal(baseline.MY_HARNESS_ENHANCE_HOME, undefined);
+  assert.equal(baseline.MY_HARNESS_ENHANCE_SESSION, undefined);
+});
+
+test('fixture is a git repo whose tests pass', async () => {
+  const dir = tempDir('mhe-ab-fixture-');
+  createFixture(dir);
+  assert.ok(fs.existsSync(path.join(dir, 'src', 'lib.mjs')));
+  assert.ok(fs.existsSync(path.join(dir, '.git')));
+  const check = await runFixtureCheck(dir, 60000);
+  assert.equal(check.ok, true, JSON.stringify(check));
+  assert.equal(check.failed, 0);
+  assert.equal(check.test_files, 1);
+});
+
+test('a copied fixture workspace keeps its git history', () => {
+  const source = tempDir('mhe-ab-source-');
+  createFixture(source);
+  const target = path.join(tempDir('mhe-ab-target-'), 'workspace');
+  prepareWorkspace(source, target);
+  assert.ok(fs.existsSync(path.join(target, '.git')));
+  assert.ok(fs.existsSync(path.join(target, 'test', 'lib.test.mjs')));
+});
+
+test('turn summary tracks context growth and hook denials', () => {
+  const summary = summarizeTurns([
+    { cli_ok: true, duration_ms: 10, context_usage_ratio: 0.1, check: { ok: true } },
+    {
+      cli_ok: true,
+      duration_ms: 20,
+      context_usage_ratio: 0.4,
+      check: { ok: false },
+      hooks: { entries: 3, events: { tool_denied: 1 }, denials: { allowlist: 1 }, jobs: { started: 1 } },
+    },
+  ]);
+  assert.equal(summary.turns, 2);
+  assert.equal(summary.cli_failed, 0);
+  assert.equal(summary.context.delta, 0.3);
+  assert.equal(summary.context.max, 0.4);
+  assert.equal(summary.checks_ok, 1);
+  assert.equal(summary.hooks.denials.allowlist, 1);
+});
+
+test('ab run writes a summary and refuses a non-empty output dir', async () => {
+  const outDir = path.join(tempDir('mhe-ab-out-'), 'run');
+  const baselineConfig = tempDir('mhe-ab-baseline-');
+  const calls = [];
+  const result = await runAb({
+    arms: ['baseline'],
+    turns: 2,
+    repeats: 1,
+    model: 'Qwen3.8-Flash',
+    baselineConfig,
+    outDir,
+    runTurn: async ({ prompt, sessionId, resume }) => {
+      calls.push({ prompt, resume });
+      return {
+        ok: true,
+        code: 0,
+        durationMs: 5,
+        timedOut: false,
+        stdout: '',
+        stderr: '',
+        payload: { type: 'result', result: 'ok', context_usage_ratio: calls.length * 0.1 },
+      };
+    },
+    check: async () => ({ ok: true, code: 0, passed: 2, failed: 0, test_files: 1, duration_ms: 3 }),
+    log: () => {},
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].resume, false);
+  assert.equal(calls[1].resume, true);
+  assert.equal(result.summary.arms.baseline.runs, 1);
+  assert.equal(result.summary.arms.baseline.turns, 2);
+  assert.ok(fs.existsSync(path.join(outDir, 'summary.json')));
+  assert.match(fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8'), /\| baseline \|/);
+
+  await assert.rejects(
+    runAb({
+      arms: ['baseline'],
+      turns: 1,
+      repeats: 1,
+      model: 'Qwen3.8-Flash',
+      baselineConfig,
+      outDir,
+      runTurn: async () => ({ ok: true, code: 0, durationMs: 1, timedOut: false, stdout: '', stderr: '', payload: {} }),
+      check: async () => ({ ok: true }),
+      log: () => {},
+    }),
+    /not empty/,
+  );
+});
+
+test('ab run refuses Auto as a model and a treatment arm without harness hooks', async () => {
+  const baselineConfig = tempDir('mhe-ab-baseline-auto-');
+  await assert.rejects(
+    runAb({
+      arms: ['baseline'],
+      model: 'auto',
+      baselineConfig,
+      outDir: path.join(tempDir('mhe-ab-out-auto-'), 'run'),
+      log: () => {},
+    }),
+    /Auto is not a valid A\/B model/,
+  );
+
+  const treatmentConfig = tempDir('mhe-ab-treatment-empty-');
+  await assert.rejects(
+    runAb({
+      arms: ['treatment'],
+      model: 'Qwen3.8-Flash',
+      treatmentConfig,
+      treatmentHome: tempDir('mhe-ab-home-'),
+      outDir: path.join(tempDir('mhe-ab-out-treatment-'), 'run'),
+      log: () => {},
+    }),
+    /no harness hooks/,
+  );
+});

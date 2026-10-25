@@ -61,6 +61,7 @@
 - [docs/adapters.md](docs/adapters.md) — adapter 契约与能力矩阵。
 - [docs/worktrees.md](docs/worktrees.md) — 代码任务的隔离 git worktree。
 - [docs/brief-checks.md](docs/brief-checks.md) — 共享 brief 与确定性检查。
+- [docs/retention.md](docs/retention.md) — 保留期限与垃圾回收。
 - [overlays/README.md](overlays/README.md) — 个人 agent overlay 与安全安装/卸载。
 - [docs/roadmap.md](docs/roadmap.md) — adapter 与控制面路线图。
 - [docs/validation.md](docs/validation.md) — 本机验证记录。

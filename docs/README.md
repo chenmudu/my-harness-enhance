@@ -14,13 +14,14 @@ This page is the index and authority order for the repository documentation. Whe
 | [worktrees.md](worktrees.md) | Code worktrees, dispatch gate, land | Code delivery |
 | [brief-checks.md](brief-checks.md) | Brief fields, checker ids, acceptance | Acceptance |
 | [metrics.md](metrics.md) | What is measured and what the numbers mean | Measurements |
+| [retention.md](retention.md) | Retention limits and garbage collection | State lifecycle |
 | [roadmap.md](roadmap.md) | Planned work | Plans, not current behavior |
 | [validation.md](validation.md) | Local validation record | Historical evidence |
 | [../overlays/README.md](../overlays/README.md) | Personal agent overlay | Overlay install |
 
 ## Conventions
 
-- English is the default; every page under `docs/` and the two root pages has a `.zh-CN.md` twin with a back-link on line 3. `overlays/README.md` is an operational README and intentionally has no twin. If twins diverge, the English page wins.
+- English is the default; every page under `docs/`, the two root pages, and `overlays/README.md` has a `.zh-CN.md` twin with a back-link on line 3. If twins diverge, the English page wins.
 - Fenced code, commands, JSON, and identifiers are verbatim in both languages. Do not translate them.
 - A page describes the current commit. `validation.md` is a dated record, not a specification.
 - Personal notes live in `docs/others/` and are gitignored. They are not repository documentation.

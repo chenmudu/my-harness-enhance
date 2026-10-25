@@ -110,6 +110,34 @@ Baseline（不加这一层）：
 预期的形态不是“主 context 一直很小”，而是**主 context 随决策和结果摘要增长，
 而不是随执行细节增长**。
 
+## 长时 A/B runner
+
+`mhe ab` 会把同一个多轮脚本任务跑两遍：一遍对着普通的 Qoder 配置
+（baseline），一遍对着装了这个 harness 的配置（treatment）。每一轮都是一个
+独立的 CLI 进程，并通过 resume 复用同一个会话，
+因此 context 的增长方式和真实长会话一致。
+
+```
+mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
+  --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash
+```
+
+runner 强制遵守的规则：
+
+- 两个 arm 都必须指向隔离的配置目录；正常的 `~/.qoder-cn` 和
+  `~/.zcode` 会被拒绝，baseline arm 也不能带有 harness hook；
+- treatment 的状态目录是独立的 `MY_HARNESS_ENHANCE_HOME`；
+- 模型必须固定写死，`Auto` 会被拒绝；
+- 结果写在仓库之外（默认
+  `~/.mhe-test/ab-results/<stamp>`）。
+
+每轮会记录模型返回的 `context_usage_ratio`、CLI 耗时、
+fixture 的测试结果，以及 treatment arm 的 hook 计数。
+每次运行会写出 `summary.json` 和 `summary.md`，以及每个 run 的原始文件。
+
+fixture 是一个零依赖的小库，每轮新增一个函数，
+配一个测试文件；确定性检查用 `node --test`。
+
 ## 验收指标
 
 | 指标 | 证明了什么 | 目标 |

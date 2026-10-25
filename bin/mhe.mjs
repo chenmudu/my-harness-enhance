@@ -14,8 +14,10 @@ import {
   storePaths,
 } from '../src/core/store.mjs';
 import { summarizeWorkers } from '../src/core/capabilities.mjs';
+import { formatGcReport, runGc } from '../src/core/gc.mjs';
 import { enhanceHome, projectKey } from '../src/core/state-root.mjs';
 import { runDemo } from '../src/bench/demo.mjs';
+import { renderSummaryMarkdown, runAb } from '../src/bench/ab.mjs';
 import { describeAdapter } from '../src/adapters/spec.mjs';
 import { getAdapter, listAdapters } from '../src/adapters/registry.mjs';
 import { detectConfigDir, syncCapabilities } from '../src/adapters/qoder/install.mjs';
@@ -28,7 +30,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
-      if (['dry-run', 'force', 'json', 'keep', 'help', 'global'].includes(key)) {
+      if (['dry-run', 'force', 'json', 'keep', 'help', 'global', 'apply', 'include-decisions'].includes(key)) {
         out[key] = true;
       } else {
         out[key] = argv[i + 1];
@@ -62,8 +64,12 @@ Usage:
   mhe artifact <file> [--kind <kind>] [--summary <text>]
   mhe metrics [--root <project>]
   mhe report [--root <project>] [--session <id>] [--json] [--limit <n>]
+  mhe gc [--root <project>] [--apply] [--json] [--include-decisions]
   mhe enable|disable [--root <project>]
   mhe bench [--json]
+  mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir>
+         [--arm both|baseline|treatment] [--turns 15] [--repeats 2]
+         [--model Qwen3.8-Flash] [--out <dir>] [--dry-run]
   mhe demo
   mhe version | help
 
@@ -484,12 +490,54 @@ function cmdBench(args) {
   else process.stdout.write(`${benchmarkReport(scenarios)}\n`);
 }
 
+function cmdGc(args) {
+  const report = runGc({
+    root: args.root ? path.resolve(args.root) : '',
+    includeDecisions: Boolean(args['include-decisions']),
+    apply: Boolean(args.apply),
+  });
+  if (args.json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  else process.stdout.write(formatGcReport(report));
+}
+
+async function cmdAb(args) {
+  const requested = String(args.arm || 'both');
+  const arms = requested === 'both' ? ['baseline', 'treatment'] : [requested];
+  const result = await runAb({
+    arms,
+    turns: args.turns,
+    repeats: args.repeats,
+    model: args.model || undefined,
+    baselineConfig: args['baseline-config'] || null,
+    treatmentConfig: args['treatment-config'] || null,
+    treatmentHome: args['treatment-home'] || null,
+    outDir: args.out || null,
+    cli: args.cli || null,
+    fixture: args.fixture ? path.resolve(args.fixture) : '',
+    timeoutMs: args['timeout-ms'],
+    checkTimeoutMs: args['check-timeout-ms'],
+    dryRun: Boolean(args['dry-run']),
+  });
+  if (result.dryRun) {
+    process.stdout.write('ab dry run\n');
+    process.stdout.write(`- arms: ${result.arms.join(', ')}\n`);
+    process.stdout.write(`- model: ${result.model}\n`);
+    process.stdout.write(`- prompts: ${result.turns}\n`);
+    process.stdout.write(`- repeats: ${result.repeats}\n`);
+    process.stdout.write(`- output: ${result.outDir}\n`);
+    for (const prompt of result.prompts) process.stdout.write(`- ${prompt}\n`);
+    return;
+  }
+  process.stdout.write(renderSummaryMarkdown(result.summary));
+  process.stdout.write(`\nresults: ${result.outDir}\n`);
+}
+
 function cmdDemo() {
   const result = runDemo();
   process.stdout.write(`${result.report}\n`);
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const command = args._.shift();
 
@@ -542,6 +590,12 @@ function main() {
     case 'bench':
       cmdBench(args);
       break;
+    case 'gc':
+      cmdGc(args);
+      break;
+    case 'ab':
+      await cmdAb(args);
+      break;
     case 'demo':
       cmdDemo();
       break;
@@ -561,4 +615,7 @@ function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  process.stderr.write(`${error?.message || error}\n`);
+  process.exitCode = 1;
+});

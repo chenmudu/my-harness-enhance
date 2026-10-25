@@ -110,6 +110,34 @@ Treatment (auto conductor):
 The expected shape is not "main context is always tiny"; it is **main context
 grows with decisions and result summaries, not with execution details**.
 
+## Long-horizon A/B runner
+
+`mhe ab` runs one scripted multi-turn task twice: once against a plain Qoder
+config (baseline) and once against a config with the harness installed
+(treatment). Each turn is a separate CLI process that resumes the same session,
+so the context grows the way a real long session grows.
+
+```
+mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir> \
+  --arm both --turns 15 --repeats 2 --model Qwen3.8-Flash
+```
+
+Rules the runner enforces:
+
+- both arms must point at isolated config dirs; the normal `~/.qoder-cn` and
+  `~/.zcode` are rejected, and the baseline arm must not contain harness hooks;
+- the treatment state home is a separate `MY_HARNESS_ENHANCE_HOME`;
+- the model is pinned; `Auto` is rejected;
+- results are written outside the repository (default
+  `~/.mhe-test/ab-results/<stamp>`).
+
+Per turn the runner records the model-reported `context_usage_ratio`, the CLI
+duration, the fixture test result, and the hook counters of the treatment arm.
+The run writes `summary.json` and `summary.md` next to the raw per-run files.
+
+The fixture is a dependency-free library that grows by one function per turn,
+with one test file; the deterministic check is `node --test`.
+
 ## Acceptance metrics
 
 | Metric | What it proves | Target |

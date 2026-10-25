@@ -61,6 +61,7 @@ everything in one long session.
 - [docs/adapters.md](docs/adapters.md) — adapter contract and feature matrix.
 - [docs/worktrees.md](docs/worktrees.md) — isolated git worktrees for code tasks.
 - [docs/brief-checks.md](docs/brief-checks.md) — shared brief and deterministic checks.
+- [docs/retention.md](docs/retention.md) — retention limits and garbage collection.
 - [overlays/README.md](overlays/README.md) — personal agent overlay and safe install/uninstall.
 - [docs/roadmap.md](docs/roadmap.md) — adapter and control-plane roadmap.
 - [docs/validation.md](docs/validation.md) — local validation record.
