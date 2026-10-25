@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
 import { buildCapsule, conductorInjection, workerContract } from '../src/core/capsule.mjs';
+import { buildPacket } from '../src/core/packet.mjs';
 import { estimateTokens } from '../src/core/metrics.mjs';
 import {
   appendDecision,
@@ -29,9 +30,10 @@ test('hook injection and MCP state share one capsule budget', () => {
   const root = makeRoot();
   const { config } = loadConfig(root);
   assert.equal(config.context.maxStateTokens, undefined);
-  const capsule = buildCapsule(root, { maxTokens: config.context.maxCapsuleTokens });
+  const packet = buildPacket(root, { maxTokens: config.context.maxCapsuleTokens });
   const injection = conductorInjection(root);
-  assert.ok(injection.includes(capsule));
+  assert.ok(injection.includes(packet.text));
+  assert.match(injection, /MY-HARNESS-ENHANCE CONDUCTOR/);
   assert.match(injection, /does not inject worker contracts/);
   const injected = conductorInjection(root, { contractMode: 'injected' });
   assert.match(injected, /injects the worker contract/);

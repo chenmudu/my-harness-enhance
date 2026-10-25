@@ -680,6 +680,13 @@ async function main() {
     } catch {
       // ignore
     }
+    // A failed injection used to look exactly like a disabled layer: exit 0 and
+    // no output. Say it out loud on the events that are supposed to inject.
+    if (EVENT === 'SessionStart' || EVENT === 'UserPromptSubmit') {
+      process.stdout.write(
+        `[MY-HARNESS-ENHANCE] ${EVENT} injection failed: ${String(error?.message || error).slice(0, 200)}\n`,
+      );
+    }
   }
   process.exitCode = 0;
 }

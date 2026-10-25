@@ -264,13 +264,14 @@ conductor 会话和被映射的原生 worker 创建，
 固定段先写入，因此即使其余内容放不下，
 conductor 的工作集仍在。
 
-capsule 是状态投影，不是注意力包：
-它按优先级把账本重述一遍，而不是挑出当前决策真正需要的那一部分；
-也没有任何东西在度量某块注入是否相关。
-因此 `docs/metrics.md` 里的注意力密度目标，
-这一版设计还没有达到。
+`capsule.md` 是落盘的账本，供 `enhance_state` 和 `mhe report` 使用。
+conductor 看到的是从账本编译出来的更小的 packet：
+ROLE、SESSION、NOW、GOAL、BLOCKERS、DECIDE、CHANGED、MUST、TRUST、
+PARKED、MORE，每段都有条数上限。packet 是 view，背后的账本仍然完整。
+它仍是按规则挑的，不是量出来的——`docs/metrics.md` 里的注意力密度目标，
+要先有 R-22 的遥测才谈得上。
 
-每一轮都不会重发全量：会话开始和压缩时注入完整策略与 capsule，
+每一轮都不会重发全量：会话开始和压缩时注入完整策略与 packet，
 普通回合只收到短锚，加上内容发生变化的那几个段落。
 在 14 个任务的 plan 上实测：
 完整 1,358 tokens，无变化 73，一个任务变动后 153。

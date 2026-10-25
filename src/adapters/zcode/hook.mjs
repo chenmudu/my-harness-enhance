@@ -479,6 +479,11 @@ async function main() {
     } catch {
       // ignore
     }
+    if (event === 'SessionStart' || event === 'UserPromptSubmit') {
+      writeJson(hookJson(event, {
+        additionalContext: `[MY-HARNESS-ENHANCE] ${event} injection failed: ${String(error?.message || error).slice(0, 200)}`,
+      }));
+    }
   }
   process.exitCode = 0;
 }

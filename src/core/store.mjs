@@ -71,6 +71,7 @@ export function storePaths(root, session = '') {
     session: path.join(base, 'session.json'),
     capsule: path.join(base, 'capsule.md'),
     injection: path.join(base, 'injection.json'),
+    packet: path.join(base, 'packet.json'),
     worktrees: path.join(base, 'worktrees.json'),
   };
 }

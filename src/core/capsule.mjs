@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { atomicWrite, loadConfig } from './config.mjs';
 import { estimateTokens } from './metrics.mjs';
-import { clipText, safeEnd } from './text.mjs';
+import { clipText, fitToTokens } from './text.mjs';
 import { briefForCapsule, briefForInjection } from './brief.mjs';
 import {
   ensureSession,
@@ -18,6 +18,7 @@ import {
 } from './store.mjs';
 import { listArtifacts } from './artifacts.mjs';
 import { scheduleNext } from './attention.mjs';
+import { buildPacket } from './packet.mjs';
 import { roleHintForAgent, workerMenu } from './capabilities.mjs';
 
 export const CONDUCTOR_POLICY = `[MY-HARNESS-ENHANCE CONDUCTOR]
@@ -77,22 +78,8 @@ function clip(text, maxChars) {
   return clipText(value, maxChars - 6, '…[truncated]');
 }
 
-export function fitToTokens(text, maxTokens) {
-  if (maxTokens <= 0) return '';
-  if (estimateTokens(text) <= maxTokens) return text;
-  const suffix = '\n…[capsule truncated]';
-  // The marker is part of the output, so it has to fit inside the budget too;
-  // otherwise truncation silently overshoots the hard cap it is enforcing.
-  const room = maxTokens - estimateTokens(suffix);
-  if (room <= 0) return suffix.trim();
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (estimateTokens(text.slice(0, mid)) <= room) low = mid;
-    else high = mid - 1;
-  }
-  return `${text.slice(0, safeEnd(text, low))}${suffix}`;
+function fit(text, maxTokens) {
+  return fitToTokens(text, maxTokens, estimateTokens);
 }
 
 function nextLine(task) {
@@ -290,7 +277,7 @@ export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
   const mode = omitted.length > 0 && included === 0
     ? 'core-only'
     : (truncated || omitted.length > 0 ? 'compact' : 'full');
-  return fitToTokens(`[MY-HARNESS-ENHANCE CAPSULE v1 mode=${mode}]\n\n${text}`, budget);
+  return fit(`[MY-HARNESS-ENHANCE CAPSULE v1 mode=${mode}]\n\n${text}`, budget);
 }
 
 export function writeCapsule(root, { maxTokens = null, session = '' } = {}) {
@@ -307,12 +294,12 @@ export function conductorInjection(root, {
 } = {}) {
   const { config } = loadConfig(root);
   const budget = maxTokens ?? config.context.maxCapsuleTokens ?? 1800;
-  const capsule = buildCapsule(root, { maxTokens: budget, session });
+  const packet = buildPacket(root, { maxTokens: budget, session });
   const contractPolicy = contractMode === 'injected'
     ? '- The adapter injects the worker contract at SubagentStart. Do not call enhance_worker_contract and do not paste the contract into the prompt.'
     : '- This adapter does not inject worker contracts. Call enhance_worker_contract and put its full output, including the marker, in every Agent/Task prompt.';
-  const text = `${CONDUCTOR_POLICY}${contractPolicy}\n${capsule}`;
-  recordInjection(root, session, capsule);
+  const text = `${CONDUCTOR_POLICY}${contractPolicy}\n${packet.text}`;
+  recordInjection(root, session, packet.text);
   return text;
 }
 
@@ -375,9 +362,9 @@ export function conductorTurnInjection(root, {
 } = {}) {
   const { config } = loadConfig(root);
   const budget = maxTokens ?? config.context.maxCapsuleTokens ?? 1800;
-  const capsule = buildCapsule(root, { maxTokens: budget, session });
+  const packet = buildPacket(root, { maxTokens: budget, session });
   const previous = previousInjection(root, session);
-  const sections = capsuleSections(capsule);
+  const sections = capsuleSections(packet.text);
   const hashes = {};
   const changed = [];
   for (const item of sections) {
@@ -413,7 +400,7 @@ export function conductorTurnInjection(root, {
     changed: changed.map((item) => item.title),
     removed,
     tokens: estimateTokens(text),
-    fullTokens: estimateTokens(capsule),
+    fullTokens: packet.tokens,
   };
 }
 
@@ -469,7 +456,7 @@ export function workerInjection(root, {
     brief ? `BRIEF:\n${brief}` : '',
   ].filter(Boolean).join('\n\n');
   const contract = workerContract(agentType, { jobId, role, taskId });
-  return fitToTokens(`${contract}\n${context}`, maxTokens);
+  return fit(`${contract}\n${context}`, maxTokens);
 }
 
 export function roleForAgent(root, agentType) {

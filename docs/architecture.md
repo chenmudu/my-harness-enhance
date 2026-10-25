@@ -264,14 +264,15 @@ budget is `config.context.maxCapsuleTokens` (default 1800 tokens).
 Pinned sections are inserted first, so the conductor keeps its working set even
 when the rest does not fit.
 
-The capsule is a state projection, not an attention packet: it re-states the
-ledger in priority order instead of selecting the subset the current decision
-needs, and nothing measures whether an injected block was relevant. The
-attention-density target in `docs/metrics.md` is therefore not met by this
-design yet.
+`capsule.md` is the ledger written to disk for `enhance_state` and `mhe report`.
+What the conductor sees is a smaller packet compiled from it: ROLE, SESSION,
+NOW, GOAL, BLOCKERS, DECIDE, CHANGED, MUST, TRUST, PARKED and MORE, each with a
+hard item cap. The packet is a view; the ledger behind it stays complete. It is
+still rule-selected, not measured — the attention-density target in
+`docs/metrics.md` needs the telemetry in R-22 before that claim can be made.
 
 Injection is not re-sent in full on every turn: session start and compaction
-inject the whole policy and capsule, while a normal turn receives a short
+inject the whole policy and packet, while a normal turn receives a short
 anchor plus only the sections whose content changed (measured on a 14-task
 plan: 1,358 tokens full, 73 unchanged, 153 after one task moved).
 
