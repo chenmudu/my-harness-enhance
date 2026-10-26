@@ -19,7 +19,9 @@ brief + parallel workers -> deterministic check -> accept (or targeted fix)
 ## 1. Brief
 
 `enhance_brief` stores `~/.my-harness-enhance/projects/<hash>/sessions/<sid>/brief.json` and
-injects a compact form into every worker.
+injects a compact form into every worker. Reads and writes return a receipt
+(`profile`, `checks`, input/pair counts, `changed` keys); pass `full: true` for
+the whole brief.
 
 Fields:
 
@@ -159,7 +161,10 @@ worktree/land boundary. It is not a step.
   `needs_split`.
 - **Never tasks.** Verification/checking, commit/land, cleanup, and
   plan/reason are harness duties (`enhance_check`, `land`, the capsule), not
-  plan tasks.
+  plan tasks. `enhance_plan` enforces the clear case: a task whose whole title
+  is one of those duties (`verify`, `check`, `commit`, `land`, `merge`,
+  `cleanup`, `test`) is rejected and nothing is written; real titles such as
+  "verify webhook signatures" pass.
 - **Single-small-file floor.** There is nothing to merge: one execute worker
   is the floor and no verify/cleanup workers are added. If this is still
   slower than a direct session, that is a fast-path decision, not a splitting

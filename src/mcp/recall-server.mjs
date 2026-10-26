@@ -154,6 +154,7 @@ const TOOLS = [
         checks: { type: 'array', items: { type: 'string' } },
         notes: { type: 'string' },
         replace: { type: 'boolean' },
+        full: { type: 'boolean', description: 'Return the whole brief instead of a receipt.' },
       },
       additionalProperties: false,
     },
@@ -345,17 +346,57 @@ function toolEnhanceGoal(args = {}) {
   return jsonResult(goal);
 }
 
+function briefReceipt(brief, previous) {
+  const keys = ['profile', 'inputs', 'pairs', 'glossary', 'ownership', 'checks', 'notes'];
+  const changed = keys.filter((key) => (
+    JSON.stringify(brief?.[key] ?? null) !== JSON.stringify(previous?.[key] ?? null)
+  ));
+  return {
+    ok: true,
+    profile: brief?.profile || '',
+    checks: brief?.checks || [],
+    inputs: (brief?.inputs || []).length,
+    pairs: (brief?.pairs || []).length,
+    changed,
+    hint: 'pass full=true to read the whole brief',
+  };
+}
+
 function toolEnhanceBrief(args = {}) {
   const { root, config, session } = contextFor(args);
   const hasPatch = ['profile', 'inputs', 'pairs', 'glossary', 'ownership', 'checks', 'notes']
     .some((key) => key in args);
   const current = readBrief(root, session);
   if (!hasPatch) {
-    return current ? jsonResult(current) : textResult('(no brief)');
+    if (!current) return textResult('(no brief)');
+    return jsonResult(args.full === true ? current : briefReceipt(current, null));
   }
   const brief = buildBrief(root, args, current);
   validateBriefChecks(brief.checks, config, brief.profile);
-  return jsonResult(writeBrief(root, brief, session));
+  const saved = writeBrief(root, brief, session);
+  // The brief is injected into every worker; echoing it back cost ~425 tokens
+  // per call for information the conductor had just supplied.
+  return jsonResult(args.full === true ? saved : briefReceipt(saved, current));
+}
+
+/**
+ * A plan task is a delivery unit, never a step. The harness itself runs checks,
+ * commit/land and cleanup, so a task titled with only that duty is a splitting
+ * error with no work of its own; exact-match keeps real titles ("verify webhook
+ * signatures") out of the gate.
+ */
+const STEP_TITLES = new Set([
+  'verify', 'verification', 'check', 'checks', 'checking', 'run tests', 'test',
+  'tests', 'commit', 'land', 'merge', 'cleanup', 'clean up', 're-test', 'retest',
+]);
+
+function stepTasks(tasks = []) {
+  return tasks
+    .filter((task) => {
+      const title = String(task?.title || task?.task || '').trim().toLowerCase();
+      return STEP_TITLES.has(title);
+    })
+    .map((task) => String(task?.id || '(no id)'));
 }
 
 function planSummary(plan) {
@@ -380,6 +421,14 @@ function toolEnhancePlan(args = {}) {
   if (!Array.isArray(args.tasks)) {
     const plan = readPlan(root, session);
     return jsonResult({ ...plan, schedule: scheduleNext(plan) });
+  }
+  const tooSmall = stepTasks(args.tasks);
+  if (tooSmall.length) {
+    return textResult(
+      `plan rejected: ${tooSmall.join(', ')} name a harness duty (verify/check/commit/land/cleanup), not a delivery unit. `
+      + 'Merge it into the task it belongs to; the harness runs checks and land itself.',
+      true,
+    );
   }
   const plan = writePlan(root, args.tasks, { replace: Boolean(args.replace) }, session);
   // A write acknowledges the change instead of echoing every task back: the

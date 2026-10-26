@@ -302,7 +302,9 @@ test('MCP brief and check validate docs and mark plan tasks', () => {
     },
   ]);
   const brief = JSON.parse(responses.find((item) => item.id === 2).result.content[0].text);
-  assert.deepEqual(brief.pairs, [{ source: 'docs/example.md', target: 'docs/example.zh-CN.md' }]);
+  assert.equal(brief.pairs, 1, 'a write returns a receipt, not the whole brief');
+  assert.equal(brief.profile, 'docs');
+  assert.ok(brief.changed.includes('pairs'));
   const check = JSON.parse(responses.find((item) => item.id === 4).result.content[0].text);
   assert.equal(check.ok, true, JSON.stringify(check.findings));
   assert.deepEqual(check.task_ids_completed, ['T1']);
@@ -349,4 +351,85 @@ test('MCP enhance_artifact rejects an invalid handle', () => {
   ]);
   const artifact = responses.find((item) => item.id === 2);
   assert.equal(artifact.result.isError, true);
+});
+
+test('a brief read is a receipt unless full=true asks for the whole thing', () => {
+  const root = makeRoot();
+  const responses = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'enhance_brief',
+        arguments: { profile: 'code', inputs: ['src/a.js'], checks: ['scope', 'command:test'] },
+      },
+    },
+    {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'enhance_brief', arguments: {} },
+    },
+    {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'enhance_brief', arguments: { full: true } },
+    },
+  ]);
+  const receipt = JSON.parse(responses.find((item) => item.id === 3).result.content[0].text);
+  assert.equal(receipt.profile, 'code');
+  assert.deepEqual(receipt.checks, ['scope', 'command:test']);
+  assert.equal(receipt.inputs, 1);
+  assert.match(receipt.hint, /full=true/);
+
+  const full = JSON.parse(responses.find((item) => item.id === 4).result.content[0].text);
+  assert.equal(full.inputs[0].path, 'src/a.js');
+});
+
+test('a plan of steps is rejected, a plan of delivery units is not', () => {
+  const root = makeRoot();
+  const rejected = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'enhance_plan',
+        arguments: {
+          tasks: [
+            { id: 'T1', title: 'Add the parser' },
+            { id: 'T2', title: 'verify' },
+          ],
+        },
+      },
+    },
+  ]);
+  const refusal = rejected.find((item) => item.id === 2).result;
+  assert.equal(refusal.isError, true);
+  assert.match(refusal.content[0].text, /plan rejected: T2/);
+  assert.equal(readPlan(root).tasks.length, 0, 'a rejected plan writes nothing');
+
+  const accepted = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'enhance_plan',
+        arguments: {
+          tasks: [
+            { id: 'T1', title: 'Add the parser' },
+            { id: 'T2', title: 'Verify webhook signatures' },
+          ],
+        },
+      },
+    },
+  ]);
+  const written = JSON.parse(accepted.find((item) => item.id === 2).result.content[0].text);
+  assert.equal(written.tasks, 2);
 });

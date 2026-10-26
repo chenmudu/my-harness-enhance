@@ -20,6 +20,8 @@ brief + parallel workers -> deterministic check -> accept (or targeted fix)
 
 `enhance_brief` 把 brief 存入 `~/.my-harness-enhance/projects/<hash>/sessions/<sid>/brief.json`，并
 把它的紧凑形式注入每个 worker。
+读写都只返回回执（`profile`、`checks`、inputs/pairs 数量、变化字段），
+需要完整 brief 时传 `full: true`。
 
 字段：
 
@@ -159,7 +161,10 @@ worktree/land 边界。它不是一个步骤。
   才拆分。
 - **绝不是任务。** 验证/检查、commit/land、清理，以及
   plan/reason 都是 harness 职责（`enhance_check`、`land`、capsule），不是
-  plan 任务。
+  plan 任务。`enhance_plan` 强制执行最明确的那一档：标题整体就是这些职责词
+  （`verify`、`check`、`commit`、`land`、`merge`、`cleanup`、`test`）的任务会被
+  拒绝且不写入；只要标题还有别的实质内容，比如
+  “verify webhook signatures”，就照常通过。
 - **单小文件下限。** 没有可合并的东西：一个 execute worker
   就是下限，不额外添加 verify/cleanup worker。如果这仍然
   比直接会话更慢，那是一个快速路径（fast-path）决策，而不是拆分
