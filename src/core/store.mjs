@@ -9,6 +9,12 @@ import {
   stateDirFor,
 } from './config.mjs';
 
+// A state file that does not parse is corruption, not a first run: move it aside
+// so the next write starts clean and the bad bytes stay available for diagnosis.
+function readStateJson(file, fallback) {
+  return readJson(file, fallback, { quarantine: true });
+}
+
 // Host session ids are UUIDs, so the normalized key stays readable while
 // refusing separators that could escape the sessions directory.
 const SESSION_KEY_RE = /[^a-z0-9-]/g;
@@ -202,7 +208,7 @@ export function newJobId(prefix = 'job') {
 }
 
 export function readGoal(root, session = '') {
-  return readJson(readPath(root, session, 'goal'), {
+  return readStateJson(readPath(root, session, 'goal'), {
     text: '',
     acceptance: [],
     constraints: [],
@@ -294,7 +300,7 @@ function taskIsStale(task) {
 }
 
 export function readPlan(root, session = '') {
-  const raw = readJson(readPath(root, session, 'plan'), { tasks: [], updated_at: null });
+  const raw = readStateJson(readPath(root, session, 'plan'), { tasks: [], updated_at: null });
   const tasks = Array.isArray(raw.tasks) ? raw.tasks.map((task) => withAttention(task)) : [];
   return {
     version: PLAN_VERSION,
@@ -304,7 +310,7 @@ export function readPlan(root, session = '') {
 }
 
 export function readBrief(root, session = '') {
-  return readJson(readPath(root, session, 'brief'), null);
+  return readStateJson(readPath(root, session, 'brief'), null);
 }
 
 export function writeBrief(root, brief = {}, session = '') {
@@ -323,7 +329,7 @@ export function writeBrief(root, brief = {}, session = '') {
 }
 
 export function readLastCheck(root, session = '') {
-  return readJson(readPath(root, session, 'lastCheck'), null);
+  return readStateJson(readPath(root, session, 'lastCheck'), null);
 }
 
 export function writeLastCheck(root, result, session = '') {
@@ -394,7 +400,7 @@ function mergePlan(previousTasks, nextTasks) {
 }
 
 export function readWorktrees(root, session = '') {
-  return readJson(readPath(root, session, 'worktrees'), { version: 1, worktrees: {} });
+  return readStateJson(readPath(root, session, 'worktrees'), { version: 1, worktrees: {} });
 }
 
 function normalizeWorktreeMap(value) {
@@ -514,7 +520,7 @@ export function readDecisions(root, limit = 10) {
 }
 
 export function readJobs(root, session = '') {
-  return readJson(readPath(root, session, 'jobs'), { jobs: [] });
+  return readStateJson(readPath(root, session, 'jobs'), { jobs: [] });
 }
 
 function writeJobsUnlocked(root, jobs, session = '') {
@@ -566,7 +572,7 @@ export function updateJob(root, id, patch = {}, session = '') {
 }
 
 export function readSessions(root) {
-  return readJson(storePaths(root).sessions, { version: 1, sessions: {} });
+  return readStateJson(storePaths(root).sessions, { version: 1, sessions: {} });
 }
 
 export function markSession(root, sessionId, patch = {}) {
@@ -626,7 +632,7 @@ export function resolveSessionId(root, { explicit = '', hostPid = null } = {}) {
 }
 
 export function readSession(root, session = '') {
-  return readJson(readPath(root, session, 'session'), {});
+  return readStateJson(readPath(root, session, 'session'), {});
 }
 
 export function writeSession(root, patch = {}, session = '') {

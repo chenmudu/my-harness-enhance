@@ -6,7 +6,7 @@ import {
   readGlobalConfig,
 } from '../../../core/global.mjs';
 import { detectConfigDir, syncCapabilities } from '../install.mjs';
-import { conductorInjection, conductorTurnInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
+import { conductorInjection, conductorTurnInjection, sessionCard, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
 import { nowReminder } from '../../../core/packet.mjs';
 import { failureVerdict } from '../../../core/errors.mjs';
 import {
@@ -205,6 +205,8 @@ async function onUserPromptSubmit(payload, root, config) {
   }
   const capsule = writeCapsule(root, { session });
   const injected = conductorTurnInjection(root, { session });
+  const sessionId = sessionIdOf(payload);
+  if (sessionId) markSession(root, sessionId, sessionCard(root, { session }));
   recordMetric(root, {
     event: 'prompt_submitted',
     role: 'conductor',
@@ -216,6 +218,7 @@ async function onUserPromptSubmit(payload, root, config) {
     packet_tokens: injected.packetTokens,
     relevant_tokens: injected.relevantTokens,
     packet_hash: injected.hash,
+    mode: injected.mode,
     changed_sections: injected.changed.join(','),
   }, session);
   writeText(injected.text);

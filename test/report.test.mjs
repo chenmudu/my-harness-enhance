@@ -138,3 +138,30 @@ test('a session with no injection telemetry reports zero turns', () => {
   assert.equal(summary.injection.turns, 0);
   assert.equal(summary.injection.density, null);
 });
+
+test('summarizeMetrics joins each injection to the action and outcome that followed', () => {
+  const summary = summarizeMetrics([
+    { at: 't1', event: 'prompt_submitted', packet_tokens: 100, relevant_tokens: 90, injected_tokens: 30, mode: 'delta' },
+    { at: 't2', event: 'dispatch', tool: 'Agent' },
+    { at: 't3', event: 'job_stop', status: 'ok' },
+    { at: 't4', event: 'prompt_submitted', packet_tokens: 100, relevant_tokens: 90, injected_tokens: 20, mode: 'anchor' },
+    { at: 't5', event: 'dispatch', tool: 'Agent' },
+  ]);
+  assert.equal(summary.injection.turns, 2);
+  assert.deepEqual(summary.injection.modes, { delta: 1, anchor: 1 });
+  assert.equal(summary.injection.withAction, 2);
+  assert.equal(summary.injection.withOutcome, 1);
+});
+
+test('behavior labels are summarized next to the injection rows', () => {
+  const summary = summarizeMetrics([
+    { at: 't1', event: 'behavior_label', turn: 1, next_action_hit: true, wrong_task: 0, re_read: 0, failed: false, recovered: false },
+    { at: 't2', event: 'behavior_label', turn: 2, next_action_hit: false, wrong_task: 1, re_read: 2, failed: true, recovered: false },
+  ]);
+  assert.equal(summary.behavior.turns, 2);
+  assert.equal(summary.behavior.next_action_hit, 1);
+  assert.equal(summary.behavior.wrong_task_actions, 1);
+  assert.equal(summary.behavior.re_reads, 2);
+  assert.equal(summary.behavior.failed_turns, 1);
+  assert.equal(summarizeMetrics([]).behavior, null);
+});

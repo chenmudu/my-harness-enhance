@@ -10,6 +10,7 @@ import {
   legacyStateFiles,
   readJobs,
   readMetrics,
+  readSessions,
   sessionKey,
   storePaths,
 } from '../src/core/store.mjs';
@@ -70,7 +71,8 @@ Usage:
   mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir>
          [--arm both|baseline|treatment] [--turns 15] [--repeats 2]
          [--model GLM-5.3-Flash] [--out <dir>] [--fixture-kind library|review]
-         [--patch-size small|medium|large] [--timeout-ms <ms>] [--dry-run]
+         [--patch-size small|medium|large] [--context-window 200000]
+         [--timeout-ms <ms>] [--dry-run]
   mhe demo
   mhe version | help
 
@@ -339,6 +341,14 @@ function cmdState(args) {
     process.stdout.write(`legacy unsharded state: ${legacy.join(', ')} (kept; sessions copy it on start)\n`);
   }
   process.stdout.write(`\n${capsule}\n\n`);
+  const card = session ? (readSessions(root).sessions || {})[session] : null;
+  if (card && (card.now || card.trust)) {
+    process.stdout.write('session card:\n');
+    process.stdout.write(`- now: ${card.now || '(none)'}\n`);
+    process.stdout.write(`- blockers: ${(card.blockers || []).join(', ') || '(none)'}\n`);
+    process.stdout.write(`- changed: ${card.changed || '(unknown)'}\n`);
+    process.stdout.write(`- trust: ${card.trust || 'claimed'}\n`);
+  }
   process.stdout.write('jobs:\n');
   if (jobs.length === 0) process.stdout.write('(none)\n');
   for (const job of jobs.slice(-20)) {
@@ -469,9 +479,22 @@ function cmdReport(args) {
   );
   if (summary.injection?.turns) {
     const i = summary.injection;
+    const modes = Object.entries(i.modes || {}).sort((a, b) => b[1] - a[1]);
     lines.push(
       `injection: turns=${i.turns} packet_avg=${i.packetAvg} relevant_avg=${i.relevantAvg} `
       + `injected_avg=${i.injectedAvg} ratio=${i.ratio} density=${i.density} anchor_only=${i.anchorOnly}`,
+    );
+    lines.push(
+      `injection follow-through: with_action=${i.withAction ?? 0} with_outcome=${i.withOutcome ?? 0}`
+      + (modes.length ? ` modes=${modes.map(([name, count]) => `${name}=${count}`).join(',')}` : ''),
+    );
+  }
+  if (summary.behavior) {
+    const b = summary.behavior;
+    lines.push(
+      `behavior labels: turns=${b.turns} next_action_hit=${b.next_action_hit} `
+      + `wrong_task=${b.wrong_task_actions} re_reads=${b.re_reads} `
+      + `failed_turns=${b.failed_turns} recoveries=${b.recoveries}`,
     );
   }
   lines.push(`tool output captured: ${summary.capturedBytes} bytes`);
@@ -490,6 +513,7 @@ function cmdReport(args) {
   lines.push('');
   lines.push('not measured by hooks: M_T, b, B, C (host usage data is required);');
   lines.push('injection density is a packet composition ratio, not a behavior result.');
+  lines.push('provider token split is unavailable when the CLI zeroes the usage fields.');
   process.stdout.write(`${lines.join('\n')}\n`);
 }
 
@@ -527,6 +551,7 @@ async function cmdAb(args) {
     patchSize: args['patch-size'] || '',
     timeoutMs: args['timeout-ms'],
     checkTimeoutMs: args['check-timeout-ms'],
+    contextWindow: args['context-window'],
     dryRun: Boolean(args['dry-run']),
   });
   if (result.dryRun) {
@@ -535,6 +560,7 @@ async function cmdAb(args) {
     process.stdout.write(`- model: ${result.model}\n`);
     process.stdout.write(`- prompts: ${result.turns}\n`);
     process.stdout.write(`- repeats: ${result.repeats}\n`);
+    process.stdout.write(`- context window: ${result.contextWindow || 'not pinned'}\n`);
     process.stdout.write(`- output: ${result.outDir}\n`);
     for (const prompt of result.prompts) process.stdout.write(`- ${prompt}\n`);
     return;

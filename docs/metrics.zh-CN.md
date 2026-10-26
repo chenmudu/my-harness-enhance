@@ -10,7 +10,7 @@
 
 | 量 | 角色 | 状态 |
 | --- | --- | --- |
-| 注意力密度 | 主指标 | 未实现 |
+| 注意力密度 | 主指标 | packet 占比已采集；payload 占比待补 |
 | `b`（每轮增长） | 预算 | 逐轮以 `context_usage_ratio` × 会话窗口采集 |
 | `M_T`（收尾主 context） | 窗口检查 | 仅模拟 |
 | `B`（累积输入） | 成本 | 未采集 |
@@ -26,7 +26,7 @@
 
 `estimateTokens` 不依赖任何第三方库，并且刻意做得粗略：
 
-- CJK 码点：每个 ~1 token；
+- CJK 码点：每个 ~0.6 token（按 1.0 会把中文 payload 高估约 1.7 倍）；
 - 其他非空白字符：每个 ~0.28 token（约 3.6 chars/token）；
 - 空白字符：0。
 
@@ -45,11 +45,15 @@ A/B 对比的两侧要使用同一个估算器。
 
 本机当前输出：
 
-| 场景 | baseline 主 context | conductor 主 context | 缩减 | baseline 能否装进 180k | conductor 能否装进 180k |
-|---|---:|---:|---:|---|---|
-| light（3 步） | 34,122 | 7,170 | 79.0% | yes | yes |
-| medium（8 步） | 92,623 | 9,061 | 90.2% | yes | yes |
-| heavy（16 步） | 244,023 | 12,741 | 94.8% | no | yes |
+| 场景 | fixed | artifacts | assembly | conductor 合计 | baseline 合计 | 缩减 |
+|---|---:|---:|---:|---:|---:|---:|
+| light（3 步） | 5,448 | 1,722 | 0 | 7,170 | 34,122 | 79.0% |
+| medium（8 步） | 5,448 | 3,613 | 0 | 9,061 | 92,623 | 90.2% |
+| heavy（16 步） | 5,448 | 7,293 | 0 | 12,741 | 244,023 | 94.8% |
+
+`fixed` 是 system 加工具 schema（每个请求都要重新付），`artifacts` 是这一层自己的
+state 与 envelope，`assembly` 是 baseline 留在主 context 里的任务内容。
+这一层把 assembly 移出去，改为支付一小笔 fixed 与 artifacts 成本。
 
 每个场景的假设：system 8KB、全量工具 75KB、conductor 工具 11KB、
 state 3KB，每一步的工具输出与推理取值见 `src/core/metrics.mjs`。
@@ -73,10 +77,11 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | 事件 | 记录字段 |
 |---|---|
 | `session_start` | model、source、session id、`session`、capsule 字符/tokens |
-| `prompt_submitted` | prompt 字符数、goal 字符数、capsule tokens、注入字符/tokens、变化段落 |
+| `prompt_submitted` | prompt 字符数、goal 字符数、capsule tokens、注入字符/tokens、mode（anchor/delta）、变化段落 |
 | `dispatch` / `tool_denied` | tool、allow、gate |
 | `job_start` / `job_stop` | agent 类型、job id、status、valid、retryable、错误分类、结果 tokens |
 | `agent_result` | valid、status、原始与压缩后 envelope tokens |
+| `behavior_label` | 轮次、next-action 命中、做错任务数、重读、失败、恢复（由 `mhe ab` 写入） |
 | `now_after_tool` | tool、chars（追加到工具结果的 frontier 提醒） |
 | `tool_output_captured` | bytes、mode |
 | `compaction` / `session_stop` | trigger、capsule tokens、blocked、未 land 数 |
@@ -96,15 +101,21 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | `M_T`（收尾主 context） | 仅模拟 | `bench`、`demo` |
 | `b`（每轮增长） | 逐轮采集 | `mhe ab` 里的 `context_usage_ratio` × 会话窗口 |
 | `B`（累积输入） | 未采集 | 需要逐轮 context 记账 |
-| `C`（实际计费） | 每次运行采集 | CLI transcript 里的 `credits` |
+| `C`（实际计费） | 每次运行采集 | `mhe ab` 里 conductor 与 `subagents/agent-*.jsonl` 的 credits 之和 |
 | 构成 | 从 transcript 量出来 | assistant / 工具结果 / worker 结果 |
 | envelope / capsule tokens | 已采集 | hook 遥测 |
-| 注意力密度 | packet 占比已采集；行为侧仍缺 | `prompt_submitted` 的 packet/relevant tokens |
+| 行为标签 | 每次运行采集 | `mhe ab` 写入的 `behavior_label` 行 |
+| 注意力密度 | packet 占比已采集；payload 占比另算 | `prompt_submitted` 的 packet/relevant/injected tokens |
 
 `density` = `relevant_tokens / packet_tokens`，
 其中 relevant 指除去 PARKED 与 MORE 之外的部分。
 它说明 packet 里有多少是关于当前决策的；
 它不说明模型是否照此行动，那要靠行为标签。
+
+packet 占比只覆盖每轮的增量注入，而一次请求的 payload 是整段对话。
+两个数都要报：`density`（packet 构成）与注入 tokens 除以 `context_tokens`
+（payload 占比）。当 CLI 把 provider 的 usage 字段清零时，输入/输出拆分
+保持不可得；报告会直说不可得，而不是编一个数。
 
 hook 看不到完整主 context，因此 `agent_result.compact_tokens` 是
 “本次进入主 context 的量”的最佳代理；
@@ -183,15 +194,25 @@ runner 强制遵守的规则：
   `~/.zcode` 会被拒绝，baseline arm 也不能带有 harness hook；
 - treatment 的状态目录是独立的 `MY_HARNESS_ENHANCE_HOME`；
 - 模型必须固定写死，`Auto` 会被拒绝；
+- 两个 arm 都传入同一个显式 `--context-window`（默认 200,000）；如果两边仍报
+  不同窗口，这次 run 标为 `context.valid: false`，比值直接作废，而不只是警告；
+- `--repeats` 按中位数 [最小-最大] 报告；少于 3 次运行的结论标为
+  冒烟测试，不能用来支撑成本比值；
+- credits 是 conductor 会话与每个 `subagents/agent-*.jsonl` 之和；
+  缺少 worker 用量的历史 run 标为 `conductor-only`；
 - 结果写在仓库之外（默认
   `~/.my-harness-enhance/ab-results/<stamp>`）；
 - 返回 `is_error` 的 turn 会把 CLI 自己的错误文本记下来；
-  免费 `qfmodel` 有每日用量上限，
+  免费模型档有每日用量上限，
   长跑可能以 `error_code` 110 收场而不是结果。
 
 每轮会记录模型返回的 `context_usage_ratio`、CLI 耗时、
 fixture 的测试结果，以及 treatment arm 的 hook 计数。
 每次运行会写出 `summary.json` 和 `summary.md`，以及每个 run 的原始文件。
+
+每次运行还会在输出目录下留下每个 arm 的 `workspace/`。保留
+`summary.json`、`summary.md` 与 `runs/*/result.json`，其余 workspace 删掉；
+`npm test` 已改为只用一个可丢弃的临时根目录，不再往真实 `%TEMP%` 里堆。
 
 该比率是最后一次请求的 `input_tokens / max_input_tokens`，裁剪到 0..1，
 而 token 明细字段本身被 CLI 置零。分母按会话而非按模型确定：CLI 解析到模型时
@@ -216,7 +237,7 @@ fixture 的测试结果，以及 treatment arm 的 hook 计数。
 
 三档补丁、各 3 轮：
 
-| patch 行数 | baseline credits | treatment credits | 比值 | 墙钟（分钟） | baseline 工具 tokens | treatment 工具 + worker |
+| patch 行数 | baseline credits（仅 conductor） | treatment credits（仅 conductor） | 比值 | 墙钟（分钟） | baseline 工具 tokens | treatment 工具 + worker |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 491 | 1.80 | 3.11 | 1.73x | 1.0 / 4.5 | 7,881 | 3,050 |
 | 1,931 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
@@ -224,7 +245,7 @@ fixture 的测试结果，以及 treatment arm 的 hook 计数。
 
 同一形状、只改轮数（1,931 行）：
 
-| 轮数 | baseline credits | treatment credits | 比值 | 墙钟（分钟） | baseline 工具 tokens | treatment 工具 + worker |
+| 轮数 | baseline credits（仅 conductor） | treatment credits（仅 conductor） | 比值 | 墙钟（分钟） | baseline 工具 tokens | treatment 工具 + worker |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 3 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
 | 15 | 23.66 | 19.59 | 0.83x | 6.7 / 21.8 | 98,535 | 13,280 |
@@ -248,7 +269,7 @@ credits 同时跟着请求数和上下文走，不是单独跟某一个：
 
 | 指标 | 证明了什么 | 目标 |
 |---|---|---|
-| 注意力密度 | conductor 看到的是当前决策需要的 | 每块注入都能对应当前决策；尚未测量 |
+| 注意力密度 | conductor 看到的是当前决策需要的 | 逐轮 packet 占比 + payload 占比；每次运行有行为标签 |
 | 主 context 增长（`b`） | 执行细节留在主 context 之外 | 同一任务形状下低于 baseline；尚未证明 |
 | 工具 schema 占比 | conductor 的工具面很小 | 主 context 的 <25% |
 | 非法 envelope 泄漏率 | contract 约束生效 | 主 context 中 0 个原始非法 blob |

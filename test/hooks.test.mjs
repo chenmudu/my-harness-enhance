@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { initStore, readGoal, readJobs, readMetrics, readPlan, storePaths, upsertJob, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
+import { initStore, readGoal, readJobs, readMetrics, readPlan, readSessions, storePaths, upsertJob, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
 import { canonicalPath } from '../src/core/state-root.mjs';
 import { saveConfig } from '../src/core/config.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
@@ -790,4 +790,25 @@ test('a compacted session gets the packet re-injected, not just the capsule', ()
   assert.match(out.stdout, /MY-HARNESS-ENHANCE PACKET v1/);
   assert.match(out.stdout, /## NOW\n\[in_progress\] T1 wire it/);
   assert.match(out.stdout, /Ship the endpoint/);
+});
+
+test('the prompt metric records the injection mode and refreshes the session card', () => {
+  const root = setupRoot();
+  // A new goal clears the brief and the last check, so establish the goal first
+  // and then use a continuation prompt: the card must see the check that follows.
+  writeGoal(root, { text: 'Ship the endpoint' }, 'session_card');
+  writePlan(root, [{ id: 't1', title: 'Ship the endpoint', status: 'in_progress' }], {}, 'session_card');
+  writeLastCheck(root, { ok: true, checked: [], findings: [], summary: { blockers: 0, warnings: 0, infos: 0 } }, 'session_card');
+
+  runHook(root, 'SessionStart', { model: 'qfmodel', source: 'startup', session_id: 'session_card' });
+  runHook(root, 'UserPromptSubmit', { session_id: 'session_card', prompt: '继续' });
+
+  const prompt = readMetrics(root, 100).filter((entry) => entry.event === 'prompt_submitted').pop();
+  assert.ok(['anchor', 'delta'].includes(prompt.mode), `mode ${prompt.mode}`);
+
+  const card = readSessions(root).sessions.session_card;
+  assert.ok(card, 'the session card is written on prompt submit');
+  assert.match(card.now, /^t1 /);
+  assert.equal(card.trust, 'verified');
+  assert.ok(card.changed);
 });

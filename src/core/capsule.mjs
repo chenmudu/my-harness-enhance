@@ -97,6 +97,27 @@ function nextLine(task) {
   return `${base}${action}${blockers}`;
 }
 
+/**
+ * A four-field card for `sessions.json`, read when a human or another session
+ * looks at the index. It is derived from the ledger on every write, never a
+ * second source of truth.
+ */
+export function sessionCard(root, { session = '' } = {}) {
+  const plan = readPlan(root, session);
+  const schedule = scheduleNext(plan);
+  const top = schedule.candidates[0] || null;
+  const lastCheck = readLastCheck(root, session);
+  const tasks = plan.tasks || [];
+  return {
+    now: top ? `${top.id} ${top.title || top.task || ''}`.trim() : '',
+    blockers: tasks
+      .filter((task) => Array.isArray(task.blockers) && task.blockers.length)
+      .map((task) => task.id),
+    changed: plan.updated_at || '',
+    trust: lastCheck ? (lastCheck.ok ? 'verified' : 'failed') : 'claimed',
+  };
+}
+
 export function buildCapsule(root, { maxTokens = null, session = '' } = {}) {
   const { config } = loadConfig(root);
   const budget = maxTokens ?? config.context.maxCapsuleTokens ?? 1800;
@@ -404,6 +425,7 @@ export function conductorTurnInjection(root, {
   );
   return {
     text,
+    mode: changed.length ? 'delta' : 'anchor',
     changed: changed.map((item) => item.title),
     removed,
     tokens: estimateTokens(text),

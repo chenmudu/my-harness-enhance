@@ -56,3 +56,23 @@ test('demo can clean up its temp state', () => {
   const result = runDemo({ keep: false });
   assert.equal(fs.existsSync(result.root), false);
 });
+
+test('the estimator keeps a hundred Chinese characters inside the documented band', () => {
+  const tokens = estimateTokens('中'.repeat(100));
+  assert.ok(tokens >= 55 && tokens <= 70, `tokens ${tokens}`);
+  assert.equal(estimateTokens('中'), 1, 'a single character still costs at least one token');
+});
+
+test('each scenario splits the conductor context into fixed, artifacts and assembly', () => {
+  const scenario = simulateScenario({ name: 'split', steps: 3 });
+  assert.ok(scenario.router.breakdown.fixed > 0);
+  assert.ok(scenario.router.breakdown.artifacts > 0);
+  assert.equal(scenario.router.breakdown.assembly, 0);
+  assert.equal(scenario.baseline.breakdown.artifacts, 0);
+  assert.ok(scenario.baseline.breakdown.assembly > 0);
+  assert.equal(
+    scenario.router.breakdown.fixed + scenario.router.breakdown.artifacts + scenario.router.breakdown.assembly,
+    scenario.router.mainTokens,
+  );
+  assert.match(benchmarkReport(), /fixed \| artifacts \| assembly/);
+});

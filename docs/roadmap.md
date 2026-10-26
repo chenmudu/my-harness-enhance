@@ -28,7 +28,7 @@ evidence and the surrounding tooling.
 - Retention and garbage collection: `mhe gc` plans by default; metrics and logs
   30 days and 5 MiB, artifacts 30 days with a 7-day grace, decisions 180 days
   (off by default), worktrees 7 days.
-- 330 tests; demo; benchmark; Qoder install with one fallback agent; installed
+- The full test suite; demo; benchmark; Qoder install with one fallback agent; installed
   hook simulation; two real sessions plus a two-session run.
 - One conductor + native workers; workers are leaves (Agent/Task denied), so
   there is no silent nested fan-out.

@@ -6,7 +6,9 @@ export function byteLength(text) {
 
 /**
  * Rough, dependency-free token estimate.
- * CJK code points count ~1 token each; other non-space characters ~0.28 token.
+ * CJK code points count ~0.6 token each: 1.0 overstates Chinese payloads by
+ * roughly 1.7x, and the A/B tables are read as ratios against English content.
+ * Other non-space characters are ~0.28 token.
  * Use the same estimator on both sides of an A/B comparison so the ratio is
  * meaningful even if the absolute number is approximate.
  */
@@ -27,7 +29,7 @@ export function estimateTokens(text) {
       other += 1;
     }
   }
-  return Math.ceil(cjk + other * 0.28);
+  return Math.ceil(cjk * 0.6 + other * 0.28);
 }
 
 export function composition(items) {
@@ -85,6 +87,13 @@ export function simulateScenario({
         tool_results: steps * stepToolTokens,
         reasoning: steps * stepReasoningTokens,
       },
+      // Fixed = what every request pays again; artifacts = the layer's own
+      // state; assembly = task content the baseline keeps in the main context.
+      breakdown: {
+        fixed: systemTokens + toolsTokens,
+        artifacts: 0,
+        assembly: steps * (stepToolTokens + stepReasoningTokens),
+      },
       fitsWindow: baselineMain <= windowTokens,
     },
     router: {
@@ -94,6 +103,11 @@ export function simulateScenario({
         conductor_tools: routerToolsTokens,
         state: stateTokens,
         envelopes: steps * envelopeTokens,
+      },
+      breakdown: {
+        fixed: systemTokens + routerToolsTokens,
+        artifacts: stateTokens + steps * envelopeTokens,
+        assembly: 0,
       },
       workerTokens,
       fitsWindow: routerMain <= windowTokens,
@@ -135,15 +149,14 @@ export function formatNumber(value) {
 
 export function formatScenarioTable(scenarios) {
   const lines = [];
-  lines.push('scenario | baseline main | conductor main | reduction | baseline fits 180k | conductor fits 180k');
-  lines.push('--- | ---: | ---: | ---: | --- | ---');
+  lines.push('scenario | fixed | artifacts | assembly | conductor total | baseline total | reduction');
+  lines.push('--- | ---: | ---: | ---: | ---: | ---: | ---:');
   for (const scenario of scenarios) {
+    const b = scenario.router.breakdown;
     lines.push(
-      `${scenario.name} | ${formatNumber(scenario.baseline.mainTokens)} | ` +
-      `${formatNumber(scenario.router.mainTokens)} | ` +
-      `${(scenario.reduction * 100).toFixed(1)}% | ` +
-      `${scenario.baseline.fitsWindow ? 'yes' : 'no'} | ` +
-      `${scenario.router.fitsWindow ? 'yes' : 'no'}`,
+      `${scenario.name} | ${formatNumber(b.fixed)} | ${formatNumber(b.artifacts)} | ` +
+      `${formatNumber(b.assembly)} | ${formatNumber(scenario.router.mainTokens)} | ` +
+      `${formatNumber(scenario.baseline.mainTokens)} | ${(scenario.reduction * 100).toFixed(1)}%`,
     );
   }
   return lines.join('\n');
@@ -168,6 +181,12 @@ export function formatScenarioDetail(scenario) {
   for (const [kind, tokens] of Object.entries(scenario.router.composition)) {
     lines.push(`- ${kind}: ${formatNumber(tokens)}`);
   }
+  lines.push('');
+  lines.push('breakdown (fixed / artifacts / assembly):');
+  const b = scenario.router.breakdown;
+  lines.push(`- conductor: ${formatNumber(b.fixed)} / ${formatNumber(b.artifacts)} / ${formatNumber(b.assembly)}`);
+  const base = scenario.baseline.breakdown;
+  lines.push(`- baseline: ${formatNumber(base.fixed)} / ${formatNumber(base.artifacts)} / ${formatNumber(base.assembly)}`);
   return lines.join('\n');
 }
 
@@ -233,6 +252,8 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
   const agentResultTokens = [];
   const capsuleTokens = [];
   const injection = [];
+  const labels = [];
+  let currentInjection = null;
   let firstAt = '';
   let lastAt = '';
   let started = 0;
@@ -251,6 +272,10 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
     if (at) {
       if (!firstAt) firstAt = at;
       lastAt = at;
+    }
+    if (event === 'behavior_label') {
+      labels.push(entry);
+      continue;
     }
     const agent = String(entry.agent_type || '');
     if (agent) workers[agent] = workers[agent] || { starts: 0, stops: 0, invalid: 0 };
@@ -286,12 +311,27 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
     const capsule = metricNumber(entry.capsule_tokens);
     if (capsule !== null) capsuleTokens.push(capsule);
     if (event === 'prompt_submitted' && metricNumber(entry.packet_tokens) !== null) {
-      injection.push({
+      currentInjection = {
         packet: metricNumber(entry.packet_tokens),
         relevant: metricNumber(entry.relevant_tokens),
         injected: metricNumber(entry.injected_tokens),
         changed: String(entry.changed_sections || ''),
-      });
+        mode: String(entry.mode || ''),
+        action: '',
+        outcome: '',
+      };
+      injection.push(currentInjection);
+    } else if (event === 'prompt_submitted') {
+      currentInjection = null;
+    } else if (currentInjection) {
+      // What the conductor did with the last injection: the first dispatched
+      // tool and the first worker status that came back.
+      if (!currentInjection.action && event === 'dispatch') {
+        currentInjection.action = String(entry.tool || 'dispatch');
+      }
+      if (!currentInjection.outcome && event === 'job_stop') {
+        currentInjection.outcome = String(entry.status || 'unknown');
+      }
     }
   }
 
@@ -321,9 +361,27 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
     },
     capsuleTokens: metricStats(capsuleTokens),
     injection: summarizeInjection(injection),
+    behavior: summarizeBehaviorLabels(labels),
     capturedBytes,
     workers,
   };
+}
+
+/**
+ * Deterministic behavior labels written by the A/B runner. They live next to
+ * the injection rows so density and behavior can be read from one report.
+ */
+function summarizeBehaviorLabels(rows) {
+  if (!rows.length) return null;
+  const totals = { turns: rows.length, next_action_hit: 0, wrong_task_actions: 0, re_reads: 0, failed_turns: 0, recoveries: 0 };
+  for (const row of rows) {
+    if (row.next_action_hit === true) totals.next_action_hit += 1;
+    totals.wrong_task_actions += Number(row.wrong_task) || 0;
+    totals.re_reads += Number(row.re_read) || 0;
+    if (row.failed === true) totals.failed_turns += 1;
+    if (row.recovered === true) totals.recoveries += 1;
+  }
+  return totals;
 }
 
 /**
@@ -334,13 +392,21 @@ export function summarizeMetrics(metrics = [], { session = '' } = {}) {
 function summarizeInjection(rows) {
   const turns = rows.length;
   if (!turns) {
-    return { turns: 0, packetAvg: null, relevantAvg: null, injectedAvg: null, ratio: null, density: null, anchorOnly: 0 };
+    return {
+      turns: 0, packetAvg: null, relevantAvg: null, injectedAvg: null, ratio: null,
+      density: null, anchorOnly: 0, modes: {}, withAction: 0, withOutcome: 0,
+    };
   }
   const sum = (pick) => rows.reduce((total, row) => total + (typeof row[pick] === 'number' ? row[pick] : 0), 0);
   const packetAvg = Math.round(sum('packet') / turns);
   const relevantAvg = Math.round(sum('relevant') / turns);
   const injectedAvg = Math.round(sum('injected') / turns);
   const anchorOnly = rows.filter((row) => !String(row.changed || '').trim()).length;
+  const modes = {};
+  for (const row of rows) {
+    const mode = String(row.mode || 'unknown');
+    modes[mode] = (modes[mode] || 0) + 1;
+  }
   return {
     turns,
     packetAvg,
@@ -349,5 +415,8 @@ function summarizeInjection(rows) {
     ratio: packetAvg ? Math.round((injectedAvg / packetAvg) * 1000) / 1000 : null,
     density: packetAvg ? Math.round((relevantAvg / packetAvg) * 1000) / 1000 : null,
     anchorOnly,
+    modes,
+    withAction: rows.filter((row) => row.action).length,
+    withOutcome: rows.filter((row) => row.outcome).length,
   };
 }

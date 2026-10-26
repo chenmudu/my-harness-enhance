@@ -36,6 +36,23 @@ export function readTranscript(file) {
     .filter(Boolean);
 }
 
+/**
+ * Subagent transcripts sit beside the main session file. The CLI bills each
+ * worker request separately, so a cost reading that only sums the main file
+ * undercounts the treatment arm by everything the workers spent.
+ */
+export function workerTranscriptPaths(configDir, workspace, sessionId) {
+  const key = String(workspace || '').replace(/[^A-Za-z0-9]/g, '-');
+  const dir = path.join(configDir, 'projects', key, String(sessionId || ''), 'subagents');
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((name) => name.endsWith('.jsonl')).sort();
+  } catch {
+    return [];
+  }
+  return names.map((name) => path.join(dir, name));
+}
+
 function normalize(target) {
   return String(target || '').toLowerCase().replace(/\\/g, '/').replace(/^\.\//, '');
 }
@@ -271,23 +288,63 @@ export function summarizeComposition(entries) {
   return out;
 }
 
-/** Billed cost as the CLI reports it, per request. */
-export function summarizeCost(entries) {
-  const events = Array.isArray(entries) ? entries : [];
+function creditsOf(events) {
+  const rows = Array.isArray(events) ? events : [];
   let credits = 0;
   let requests = 0;
   let model = '';
-  for (const entry of events) {
+  const provider = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, reported: 0 };
+  for (const entry of rows) {
     const usage = entry.usage || entry.message?.usage;
     if (!usage) continue;
     requests += 1;
     const value = Number(usage.credits);
     if (Number.isFinite(value) && value > 0) credits += value;
     if (!model && entry.message?.model) model = entry.message.model;
+    for (const [field, key] of [
+      ['input_tokens', 'input'],
+      ['output_tokens', 'output'],
+      ['cache_creation_input_tokens', 'cacheCreation'],
+      ['cache_read_input_tokens', 'cacheRead'],
+    ]) {
+      const count = Number(usage[field]);
+      if (Number.isFinite(count) && count > 0) {
+        provider[key] += count;
+        provider.reported += 1;
+      }
+    }
   }
+  return { credits, requests, model, provider };
+}
+
+/**
+ * Billed cost as the CLI reports it. `entries` is the main session; pass
+ * `workerEntries` (the flattened subagent transcripts) to get the total the
+ * account was actually charged. `credits` keeps its old meaning (conductor
+ * only) so stored runs stay readable; use `total` for any comparison.
+ */
+export function summarizeCost(entries, { workerEntries = [] } = {}) {
+  const conductor = creditsOf(entries);
+  const worker = creditsOf(workerEntries);
+  const round = (value) => Math.round(value * 10000) / 10000;
   return {
-    credits: Math.round(credits * 10000) / 10000,
-    requests,
-    model,
+    credits: round(conductor.credits),
+    requests: conductor.requests,
+    model: conductor.model || worker.model,
+    conductor: { credits: round(conductor.credits), requests: conductor.requests },
+    worker: { credits: round(worker.credits), requests: worker.requests },
+    total: {
+      credits: round(conductor.credits + worker.credits),
+      requests: conductor.requests + worker.requests,
+    },
+    // The CLI zeroes these fields today; `available: false` means the split is
+    // unknown, not that the model spent nothing on input or output.
+    provider: {
+      available: conductor.provider.reported > 0 || worker.provider.reported > 0,
+      input: conductor.provider.input + worker.provider.input,
+      output: conductor.provider.output + worker.provider.output,
+      cacheCreation: conductor.provider.cacheCreation + worker.provider.cacheCreation,
+      cacheRead: conductor.provider.cacheRead + worker.provider.cacheRead,
+    },
   };
 }
