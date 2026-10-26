@@ -11,10 +11,10 @@
 | 量 | 角色 | 状态 |
 | --- | --- | --- |
 | 注意力密度 | 主指标 | 未实现 |
-| `b`（每轮增长） | 预算 | 逐轮以 `context_usage_ratio` 采集 |
+| `b`（每轮增长） | 预算 | 逐轮以 `context_usage_ratio` × 会话窗口采集 |
 | `M_T`（收尾主 context） | 窗口检查 | 仅模拟 |
 | `B`（累积输入） | 成本 | 未采集 |
-| `C`（实际计费） | 经济 | 未采集 |
+| `C`（实际计费） | 经济 | 每次运行以 `credits` 采集 |
 
 排序是 注意力密度 > context 结构 > 增长速度 > token 成本。
 只显示当前任务就能把这个比值做到接近 100%，同时把账本其余部分藏起来；
@@ -94,10 +94,10 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | 量 | 状态 | 来源 |
 |---|---|---|
 | `M_T`（收尾主 context） | 仅模拟 | `bench`、`demo` |
-| `b`（每轮增长） | 逐轮采集 | `mhe ab` 里的 `context_usage_ratio` |
+| `b`（每轮增长） | 逐轮采集 | `mhe ab` 里的 `context_usage_ratio` × 会话窗口 |
 | `B`（累积输入） | 未采集 | 需要逐轮 context 记账 |
-| `C`（实际计费） | 未采集 | 需要 provider 账单数据 |
-| 构成 | 从 transcript 量出来 | CLI 会话 `.jsonl` |
+| `C`（实际计费） | 每次运行采集 | CLI transcript 里的 `credits` |
+| 构成 | 从 transcript 量出来 | assistant / 工具结果 / worker 结果 |
 | envelope / capsule tokens | 已采集 | hook 遥测 |
 | 注意力密度 | packet 占比已采集；行为侧仍缺 | `prompt_submitted` 的 packet/relevant tokens |
 

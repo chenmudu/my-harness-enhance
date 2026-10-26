@@ -414,3 +414,23 @@ test('ab run refuses Auto as a model and a treatment arm without harness hooks',
     /no harness hooks/,
   );
 });
+
+test('the summary carries composition and billed credits per arm', () => {
+  const run = (arm) => ({
+    arm,
+    repeat: 1,
+    session_id: `${arm}-1`,
+    summary: summarizeTurns([
+      { cli_ok: true, duration_ms: 1, context_usage_ratio: 0.1, context_window: 200000, context_tokens: 20000 },
+    ]),
+    composition: { assistant: 100, tool_results: 500, worker_results: 50, attachments: 5, total: 655, by_tool: { Read: 500 } },
+    cost: { credits: 1.25, requests: 3, model: 'gfmodel' },
+  });
+  const summary = summarizeAb([run('baseline'), run('treatment')], { turns: 1, repeats: 1 });
+  assert.equal(summary.arms.baseline.credits, 1.25);
+  assert.equal(summary.arms.treatment.composition.tool_results, 500);
+  const markdown = renderSummaryMarkdown(summary);
+  assert.match(markdown, /credits/);
+  assert.match(markdown, /\| baseline \|.*\| 100 \| 500 \| 50 \|/);
+  assert.match(markdown, /estimated tokens from the transcript/);
+});

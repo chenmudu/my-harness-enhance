@@ -781,3 +781,13 @@ test('hooks write counts and sizes to metrics without prompts or summaries', () 
   assert.doesNotMatch(serialized, /secret prompt text/);
   assert.doesNotMatch(serialized, /Task complete\./);
 });
+
+test('a compacted session gets the packet re-injected, not just the capsule', () => {
+  const root = setupRoot();
+  writeGoal(root, { text: 'Ship the endpoint' });
+  writePlan(root, [{ id: 'T1', title: 'wire it', status: 'in_progress' }], { replace: true });
+  const out = runHook(root, 'SessionStart', { model: 'qfmodel', source: 'compact' });
+  assert.match(out.stdout, /MY-HARNESS-ENHANCE PACKET v1/);
+  assert.match(out.stdout, /## NOW\n\[in_progress\] T1 wire it/);
+  assert.match(out.stdout, /Ship the endpoint/);
+});

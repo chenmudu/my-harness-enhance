@@ -4,6 +4,8 @@ import {
   expectedPaths,
   expectedPathsFor,
   summarizeBehavior,
+  summarizeComposition,
+  summarizeCost,
   transcriptPath,
 } from '../src/bench/behavior.mjs';
 
@@ -131,4 +133,53 @@ test('labels are reproducible: the same transcript yields the same numbers', () 
   const first = summarizeBehavior(entries, { fixtureKind: 'library', turns: 15 });
   const second = summarizeBehavior(entries, { fixtureKind: 'library', turns: 15 });
   assert.deepEqual(first, second);
+});
+
+test('composition splits assistant, tool and worker tokens', () => {
+  const entries = [
+    human('patch 01'),
+    {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'weighing the options'.repeat(10) },
+          { type: 'tool_use', id: 'u1', name: 'Read', input: { file_path: 'patches/01.patch' } },
+          { type: 'tool_use', id: 'u2', name: 'Agent', input: { prompt: 'worker prompt '.repeat(20) } },
+        ],
+      },
+    },
+    {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'u1', content: 'file body '.repeat(400) },
+          { type: 'tool_result', tool_use_id: 'u2', content: '{"status":"ok"}'.repeat(10) },
+        ],
+      },
+    },
+    { type: 'attachment', content: 'attached notes' },
+  ];
+  const out = summarizeComposition(entries);
+  assert.ok(out.assistant > 0);
+  assert.ok(out.tool_results > out.worker_results, 'the file body dwarfs the envelope');
+  assert.ok(out.worker_results > 0);
+  assert.ok(out.attachments > 0);
+  assert.ok(out.by_tool.Read > out.by_tool.Agent);
+  assert.equal(out.total, out.assistant + out.tool_results + out.worker_results + out.attachments);
+  assert.equal(summarizeComposition(null).total, 0);
+});
+
+test('cost sums the credits the CLI reports', () => {
+  const entries = [
+    { type: 'assistant', message: { model: 'gfmodel', usage: { credits: 0.25 } } },
+    { type: 'assistant', message: { model: 'gfmodel', usage: { credits: 0.5 } } },
+    { type: 'runtime-config', contextWindow: 200000 },
+  ];
+  const cost = summarizeCost(entries);
+  assert.equal(cost.credits, 0.75);
+  assert.equal(cost.requests, 2);
+  assert.equal(cost.model, 'gfmodel');
+  assert.equal(summarizeCost([]).credits, 0);
 });

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { estimateTokens } from '../core/metrics.mjs';
 
 /**
  * Behavior labels derived from the CLI session transcript.
@@ -211,4 +212,82 @@ export function summarizeBehavior(entries, { fixtureKind = 'library', turns = 15
   });
 
   return { coverage: 'main session only', totals, turns: rows };
+}
+const WORKER_TOOLS = new Set(['Agent', 'Task']);
+
+function blockText(block) {
+  if (!block) return '';
+  if (typeof block === 'string') return block;
+  if (typeof block.text === 'string') return block.text;
+  if (typeof block.thinking === 'string') return block.thinking;
+  if (typeof block.content === 'string') return block.content;
+  if (Array.isArray(block.content)) return block.content.map(blockText).join(' ');
+  try {
+    return JSON.stringify(block.content ?? block);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Where the tokens actually went, measured on the transcript rather than on the
+ * CLI's ratio: assistant output, ordinary tool results, and worker results are
+ * the three terms the conductor pays for. `context_usage_ratio` cannot answer
+ * this because its denominator is per session.
+ */
+export function summarizeComposition(entries) {
+  const events = Array.isArray(entries) ? entries : [];
+  const toolNames = new Map();
+  const out = { assistant: 0, tool_results: 0, worker_results: 0, attachments: 0, by_tool: {} };
+  for (const entry of events) {
+    if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
+      for (const block of entry.message.content) {
+        if (!block) continue;
+        if (block.type === 'tool_use') {
+          toolNames.set(block.id, String(block.name || ''));
+          out.assistant += estimateTokens(JSON.stringify(block.input ?? {}));
+        } else {
+          out.assistant += estimateTokens(blockText(block));
+        }
+      }
+      continue;
+    }
+    if (entry.type === 'user' && Array.isArray(entry.message?.content)) {
+      for (const block of entry.message.content) {
+        if (block?.type !== 'tool_result') continue;
+        const name = toolNames.get(block.tool_use_id) || 'unknown';
+        const tokens = estimateTokens(blockText(block));
+        out.by_tool[name] = (out.by_tool[name] || 0) + tokens;
+        if (WORKER_TOOLS.has(name)) out.worker_results += tokens;
+        else out.tool_results += tokens;
+      }
+      continue;
+    }
+    if (entry.type === 'attachment') {
+      out.attachments += estimateTokens(JSON.stringify(entry));
+    }
+  }
+  out.total = out.assistant + out.tool_results + out.worker_results + out.attachments;
+  return out;
+}
+
+/** Billed cost as the CLI reports it, per request. */
+export function summarizeCost(entries) {
+  const events = Array.isArray(entries) ? entries : [];
+  let credits = 0;
+  let requests = 0;
+  let model = '';
+  for (const entry of events) {
+    const usage = entry.usage || entry.message?.usage;
+    if (!usage) continue;
+    requests += 1;
+    const value = Number(usage.credits);
+    if (Number.isFinite(value) && value > 0) credits += value;
+    if (!model && entry.message?.model) model = entry.message.model;
+  }
+  return {
+    credits: Math.round(credits * 10000) / 10000,
+    requests,
+    model,
+  };
 }

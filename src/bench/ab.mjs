@@ -8,7 +8,7 @@ import { canonicalPath, projectKey } from '../core/state-root.mjs';
 import { sessionKey } from '../core/store.mjs';
 import { summarizeMetrics } from '../core/metrics.mjs';
 import { buildReviewFixture, checkReviewAnswers, reviewPrompts } from './review-fixture.mjs';
-import { readTranscript, summarizeBehavior, transcriptPath } from './behavior.mjs';
+import { readTranscript, summarizeBehavior, summarizeComposition, summarizeCost, transcriptPath } from './behavior.mjs';
 
 export const DEFAULT_MODEL = 'GLM-5.3-Flash';
 export const DEFAULT_TURNS = 15;
@@ -663,6 +663,8 @@ export function summarizeAb(runs, meta = {}) {
       duration_ms: 0,
       denials: 0,
       behavior: null,
+      composition: null,
+      credits: 0,
     };
     bucket.runs += 1;
     bucket.turns += run.summary.turns;
@@ -682,6 +684,18 @@ export function summarizeAb(runs, meta = {}) {
         bucket.behavior[name] = (bucket.behavior[name] || 0) + value;
       }
     }
+    if (run.composition) {
+      bucket.composition = bucket.composition || {
+        assistant: 0, tool_results: 0, worker_results: 0, attachments: 0, total: 0, by_tool: {},
+      };
+      for (const key of ['assistant', 'tool_results', 'worker_results', 'attachments', 'total']) {
+        bucket.composition[key] += run.composition[key] || 0;
+      }
+      for (const [name, tokens] of Object.entries(run.composition.by_tool || {})) {
+        bucket.composition.by_tool[name] = (bucket.composition.by_tool[name] || 0) + tokens;
+      }
+    }
+    if (run.cost) bucket.credits += run.cost.credits || 0;
     byArm[run.arm] = bucket;
   }
   const arms = {};
@@ -702,6 +716,8 @@ export function summarizeAb(runs, meta = {}) {
       duration_ms: bucket.duration_ms,
       denials: bucket.denials,
       behavior: bucket.behavior,
+      composition: bucket.composition,
+      credits: Math.round(bucket.credits * 10000) / 10000,
     };
   }
   return {
@@ -728,17 +744,19 @@ export function renderSummaryMarkdown(summary) {
   lines.push(`- turns per run: ${summary.turns}`);
   lines.push(`- repeats: ${summary.repeats}`);
   lines.push('');
-  lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | ctx delta avg | ctx last avg | minutes | denials |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | credits | assistant | tool results | worker results | minutes | denials |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const [arm, value] of Object.entries(summary.arms)) {
+    const c = value.composition;
     lines.push(
       `| ${arm} | ${value.runs} | ${value.turns} | ${value.cli_failures} | ${value.turn_timeouts || 0} | ` +
       `${value.final_tests_ok}/${value.runs} | ${value.context.tokens_last_avg ?? 'n/a'} | ` +
-      `${value.context.delta_avg ?? 'n/a'} | ${value.context.last_avg ?? 'n/a'} | ` +
-      `${(value.duration_ms / 60000).toFixed(1)} | ${value.denials} |`,
+      `${value.credits ?? 'n/a'} | ${c ? c.assistant : 'n/a'} | ${c ? c.tool_results : 'n/a'} | ` +
+      `${c ? c.worker_results : 'n/a'} | ${(value.duration_ms / 60000).toFixed(1)} | ${value.denials} |`,
     );
   }
   lines.push('');
+  lines.push('Credits are what the CLI billed; the three content columns are estimated tokens from the transcript');
   if (summary.context?.warning) {
     lines.push(`> ${summary.context.warning}`);
     lines.push('');
@@ -855,14 +873,14 @@ export async function runAb(options = {}) {
         runSession,
         check: runCheck,
       });
-      run.behavior = summarizeBehavior(
-        readTranscript(transcriptPath(
-          arm === 'treatment' ? options.treatmentConfig : options.baselineConfig,
-          workspace,
-          run.session_id,
-        )),
-        { fixtureKind, turns },
-      );
+      const transcript = readTranscript(transcriptPath(
+        arm === 'treatment' ? options.treatmentConfig : options.baselineConfig,
+        workspace,
+        run.session_id,
+      ));
+      run.behavior = summarizeBehavior(transcript, { fixtureKind, turns });
+      run.composition = summarizeComposition(transcript);
+      run.cost = summarizeCost(transcript);
       atomicWrite(
         path.join(outDir, 'runs', `${arm}-r${repeat + 1}`, 'result.json'),
         `${JSON.stringify(run, null, 2)}\n`,

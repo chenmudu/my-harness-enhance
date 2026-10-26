@@ -14,7 +14,7 @@ proxy:
 | `b` (growth per turn) | budget | collected per turn as `context_usage_ratio` × session window |
 | `M_T` (final main context) | window check | simulated only |
 | `B` (cumulative input) | cost | not collected |
-| `C` (billed cost) | economics | not collected |
+| `C` (billed cost) | economics | collected per run as `credits` |
 
 The order is attention density > context structure > growth rate > token cost. A
 projection that shows only the current task scores close to 100% on the ratio
@@ -96,8 +96,8 @@ report aggregates all entries and lists per-session counts.
 | `M_T` (final main context) | simulated only | `bench`, `demo` |
 | `b` (growth per turn) | collected per turn | `context_usage_ratio` × window in `mhe ab` |
 | `B` (cumulative input) | not collected | needs per-turn context accounting |
-| `C` (billed cost) | not collected | needs provider billing data |
-| Composition | measured from the transcript | CLI session `.jsonl` |
+| `C` (billed cost) | collected per run | `credits` in the CLI transcript |
+| Composition | measured from the transcript | assistant / tool results / worker results |
 | Envelope / capsule tokens | collected | hook telemetry |
 | Attention density | packet share collected; behavior side missing | `prompt_submitted` packet/relevant tokens |
 
