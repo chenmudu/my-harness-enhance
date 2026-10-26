@@ -276,6 +276,11 @@ inject the whole policy and packet, while a normal turn receives a short
 anchor plus only the sections whose content changed (measured on a 14-task
 plan: 1,358 tokens full, 73 unchanged, 153 after one task moved).
 
+The conductor's own output is treated as injected context too: the policy asks
+for one decision per message, no restatement of the packet, and reasoning that
+a later reader needs goes into the plan, brief, or an artifact rather than into
+chat, because every assistant message is re-read on every later turn.
+
 ### 3.2 Frontier and schedule
 
 The capsule's NEXT line is computed, not guessed: a task is ready when every

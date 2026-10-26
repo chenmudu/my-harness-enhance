@@ -276,6 +276,11 @@ PARKED、MORE，每段都有条数上限。packet 是 view，背后的账本仍�
 在 14 个任务的 plan 上实测：
 完整 1,358 tokens，无变化 73，一个任务变动后 153。
 
+conductor 自己的输出也算被注入的上下文：策略要求每条消息只给一个决策，
+不复述 packet，需要留给后来者看的推理写进 plan、brief 或 artifact，
+而不是写进对话，因为每条 assistant 消息都会在之后每一轮被重新读到，
+它的长度也就是每一轮都要再付一次的上下文。
+
 ### 3.2 frontier 与调度
 
 capsule 的 NEXT 行是算出来的，不是猜的：
