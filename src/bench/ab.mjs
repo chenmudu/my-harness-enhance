@@ -815,7 +815,7 @@ function validateOptions(options) {
 
 function defaultOutDir() {
   const stamp = new Date().toISOString().replace(/\..+$/, '').replace(/[-:]/g, '').replace('T', '-');
-  return path.join(os.homedir(), '.mhe-test', 'ab-results', stamp);
+  return path.join(os.homedir(), '.my-harness-enhance', 'ab-results', stamp);
 }
 
 export async function runAb(options = {}) {

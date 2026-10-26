@@ -184,7 +184,7 @@ Rules the runner enforces:
 - the treatment state home is a separate `MY_HARNESS_ENHANCE_HOME`;
 - the model is pinned; `Auto` is rejected;
 - results are written outside the repository (default
-  `~/.mhe-test/ab-results/<stamp>`);
+  `~/.my-harness-enhance/ab-results/<stamp>`);
 - a turn that returns `is_error` is recorded with the CLI's own error text; the
   free `qfmodel` has a daily usage cap, so a long run can end with `error_code`
   110 rather than a result.

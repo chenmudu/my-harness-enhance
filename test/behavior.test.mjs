@@ -28,8 +28,8 @@ function toolError() {
 }
 
 test('transcript paths mirror the CLI workspace key', () => {
-  const file = transcriptPath('C:/cfg', 'C:\\Users\\Administrator\\.mhe-test\\run\\workspace', 'sid-1');
-  assert.match(file, /projects[\\/]C--Users-Administrator--mhe-test-run-workspace[\\/]sid-1\.jsonl$/);
+  const file = transcriptPath('C:/cfg', 'D:\\repo\\sample\\workspace', 'sid-1');
+  assert.match(file, /projects[\\/]D--repo-sample-workspace[\\/]sid-1\.jsonl$/);
 });
 
 test('expected paths follow the prompt script for both fixtures', () => {

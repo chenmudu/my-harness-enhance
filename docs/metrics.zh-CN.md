@@ -184,7 +184,7 @@ runner 强制遵守的规则：
 - treatment 的状态目录是独立的 `MY_HARNESS_ENHANCE_HOME`；
 - 模型必须固定写死，`Auto` 会被拒绝；
 - 结果写在仓库之外（默认
-  `~/.mhe-test/ab-results/<stamp>`）；
+  `~/.my-harness-enhance/ab-results/<stamp>`）；
 - 返回 `is_error` 的 turn 会把 CLI 自己的错误文本记下来；
   免费 `qfmodel` 有每日用量上限，
   长跑可能以 `error_code` 110 收场而不是结果。
