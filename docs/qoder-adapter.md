@@ -96,7 +96,7 @@ preferred worker fails or returns an invalid envelope. Invalid worker jobs carry
 | `PreToolUse` | conductor tool allowlist; native worker policy by agent type; native TaskCreate/Get/Update/List denied |
 | `SubagentStart` | create job; inject role + envelope contract; workers are leaves |
 | `SubagentStop` | parse/store envelope; update job; invalid results get retryable + next |
-| `PostToolUse` | normalize conductor `Agent` results; capture large worker output; invalid results include the raw artifact handle |
+| `PostToolUse` | normalize conductor `Agent` results; capture large worker output; append the `[NOW]` frontier reminder when it moved; invalid results include the raw artifact handle |
 | `PreCompact` | rebuild capsule from state |
 | `Stop` | write capsule; block completion while a code worktree is unlanded |
 

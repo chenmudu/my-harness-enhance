@@ -77,6 +77,7 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | `dispatch` / `tool_denied` | tool、allow、gate |
 | `job_start` / `job_stop` | agent 类型、job id、status、valid、retryable、错误分类、结果 tokens |
 | `agent_result` | valid、status、原始与压缩后 envelope tokens |
+| `now_after_tool` | tool、chars（追加到工具结果的 frontier 提醒） |
 | `tool_output_captured` | bytes、mode |
 | `compaction` / `session_stop` | trigger、capsule tokens、blocked、未 land 数 |
 

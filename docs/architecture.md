@@ -294,7 +294,7 @@ proposed; NEXT names what to unblock instead.
 | `PreToolUse` | conductor tool allowlist; native worker policy by agent type (readonly/leaf/notools/lead); subagent allowlist |
 | `SubagentStart` | create job; inject role + worker contract + goal/acceptance |
 | `SubagentStop` | parse/store envelope; update job |
-| `PostToolUse` | normalize `Agent` result to compact envelope; capture large worker tool output |
+| `PostToolUse` | normalize `Agent` result to compact envelope; capture large worker tool output; append `[NOW]` when the frontier moved |
 | `PreCompact` | regenerate capsule from state (not from transcript) |
 | `Stop` | write capsule; block completion while a code worktree is unlanded |
 

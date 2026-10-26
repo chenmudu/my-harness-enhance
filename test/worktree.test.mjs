@@ -1131,9 +1131,13 @@ test('Qoder PostToolUse tells the conductor to land a changed code worktree', ()
     }),
   });
   assert.ok(output.trim(), 'expected hook JSON output');
-  const envelope = JSON.parse(JSON.parse(output).hookSpecificOutput.updatedToolOutput);
+  const raw = JSON.parse(output).hookSpecificOutput.updatedToolOutput;
+  const [envelopeJson, ...reminders] = raw.split('\n\n[NOW] ');
+  const envelope = JSON.parse(envelopeJson);
   assert.match(envelope.next, /not landed/);
   assert.match(envelope.next, /enhance_worktree land/);
+  assert.equal(reminders.length, 1, 'the frontier reminder follows the envelope');
+  assert.match(reminders[0], /T1|no ready task/);
 
   execFileSync('git', ['-C', created.path, 'reset', '--hard'], { stdio: 'ignore' });
   removeWorktree(root, 'T1');

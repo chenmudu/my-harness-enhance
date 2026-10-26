@@ -64,6 +64,51 @@ function changedLines(previous, current, plan) {
   return lines;
 }
 
+function scheduleLine(schedule) {
+  const top = schedule.candidates[0] || null;
+  if (top) {
+    return `[${top.status}] ${top.id} ${oneLine(top.title, 100)}`
+      + `${top.next_action ? ` — next: ${oneLine(top.next_action, 120)}` : ''} (${top.reason})`;
+  }
+  return schedule.gate === 'drain'
+    ? `drain first: ${schedule.reason}`
+    : 'no ready task: plan one, or clear a blocker';
+}
+
+function rememberNow(root, session, line) {
+  try {
+    atomicWrite(
+      storePaths(root, session).now,
+      `${JSON.stringify({ at: new Date().toISOString(), line })}\n`,
+    );
+  } catch {
+    // Remembering the reminder must never break the packet.
+  }
+}
+
+function previousNow(root, session) {
+  try {
+    return String(JSON.parse(fs.readFileSync(storePaths(root, session).now, 'utf8')).line || '');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * A one-line frontier reminder for the moment after a tool result, when the
+ * conductor is deciding again but no user prompt has fired. It stays silent
+ * unless the frontier actually moved since the last packet or reminder, so the
+ * repeated line never becomes noise.
+ */
+export function nowReminder(root, { session = '' } = {}) {
+  const plan = readPlan(root, session);
+  if (!(plan.tasks || []).length) return null;
+  const line = scheduleLine(scheduleNext(plan));
+  if (line === previousNow(root, session)) return null;
+  rememberNow(root, session, line);
+  return `[NOW] ${line}`;
+}
+
 export function buildPacket(root, { session = '', maxTokens = null } = {}) {
   const { config } = loadConfig(root);
   const budget = maxTokens ?? config.context.maxPacketTokens ?? DEFAULT_BUDGET;
@@ -78,12 +123,7 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
   const changed = changedLines(previous, current, plan);
 
   const top = schedule.candidates[0] || null;
-  const nowLine = top
-    ? `[${top.status}] ${top.id} ${oneLine(top.title, 100)}`
-      + `${top.next_action ? ` — next: ${oneLine(top.next_action, 120)}` : ''} (${top.reason})`
-    : schedule.gate === 'drain'
-      ? `drain first: ${schedule.reason}`
-      : 'no ready task: plan one, or clear a blocker';
+  const nowLine = scheduleLine(schedule);
 
   const decide = schedule.candidates.slice(1, 1 + CAPS.decide)
     .map((task) => `- ${task.id} ${oneLine(task.title, 100)} (${task.reason})`);
@@ -166,6 +206,7 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
     storePaths(root, session).packet,
     `${JSON.stringify({ at: new Date().toISOString(), ...current }, null, 2)}\n`,
   );
+  if ((plan.tasks || []).length) rememberNow(root, session, nowLine);
   return {
     text: finalText,
     tokens: estimateTokens(finalText),

@@ -567,6 +567,46 @@ test('conductor PostToolUse normalizes Agent results', () => {
   assert.ok(failure.data.artifact_handle);
 });
 
+test('a tool result carries the frontier reminder once, then stays silent', () => {
+  const root = setupRoot();
+  writePlan(root, [
+    { id: 'T1', title: 'first task', status: 'in_progress' },
+    { id: 'T2', title: 'second task', status: 'pending' },
+  ], { replace: true });
+
+  const first = runHook(root, 'PostToolUse', {
+    model: 'qfmodel',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore' },
+    tool_response: JSON.stringify(valid),
+  });
+  const withNow = parseJson(first.stdout).hookSpecificOutput.updatedToolOutput;
+  assert.match(withNow, /\n\n\[NOW\] \[in_progress\] T1 first task/);
+
+  const second = runHook(root, 'PostToolUse', {
+    model: 'qfmodel',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore' },
+    tool_response: JSON.stringify(valid),
+  });
+  const plain = parseJson(second.stdout).hookSpecificOutput.updatedToolOutput;
+  assert.doesNotMatch(plain, /\[NOW\]/);
+});
+
+test('an mhe MCP result carries the frontier reminder', () => {
+  const root = setupRoot();
+  writePlan(root, [{ id: 'T1', title: 'first task', status: 'pending' }], { replace: true });
+  const result = runHook(root, 'PostToolUse', {
+    model: 'qfmodel',
+    tool_name: 'mcp__harness-enhance__enhance_plan',
+    tool_response: '{"v":1,"status":"ok"}',
+  });
+  assert.equal(
+    parseJson(result.stdout).hookSpecificOutput.updatedToolOutput,
+    '{"v":1,"status":"ok"}\n\n[NOW] [pending] T1 first task (priority 3)',
+  );
+});
+
 test('large native worker tool output is captured as an artifact', () => {
   const root = setupRoot();
   const result = runHook(root, 'PostToolUse', {

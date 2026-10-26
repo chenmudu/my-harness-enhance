@@ -116,7 +116,7 @@ harness 的硬编码。
 |---|---|
 | `hooks` | `install.mjs` 为 SessionStart、UserPromptSubmit、PreToolUse、SubagentStart、SubagentStop、PostToolUse、PreCompact、Stop 合并 hook 条目。 |
 | `subagents` | 由 `core/capabilities.mjs` 解析出的原生 worker 派发。 |
-| `resultRewrite` | `hooks/hook.mjs` 的 PostToolUse 会发出 `updatedToolOutput`。 |
+| `resultRewrite` | `hooks/hook.mjs` 的 PostToolUse 会发出 `updatedToolOutput`；frontier 变化时附带 `[NOW]` 提醒。 |
 | `preCompact` | `hooks/hook.mjs` 的 `onPreCompact`。 |
 | `mcp` | 通过 `mergeMcp` 注册的 stdio server `src/mcp/recall-server.mjs`。 |
 | `installer` | 包装过的 `installQoder` / `uninstallQoder` / `doctorQoder`。 |
@@ -149,7 +149,7 @@ harness 的硬编码。
 
 | 缺失 | 原因 |
 |---|---|
-| `resultRewrite` | ZCode 的 PostToolUse 没有更新工具输出的通道。hook 会存储 artifact、记录 job、写日志 —— 然后什么都不发出。 |
+| `resultRewrite` | ZCode 的 PostToolUse 没有更新工具输出的通道。hook 会存储 artifact、记录 job、写日志 —— 然后什么都不发出。`[NOW]` 提醒因此随下一轮 packet 一起到达。 |
 | `preCompact` | 没有 PreCompact 事件。capsule 的存档点发生在 `Stop`；带 `source=compact` 的 `SessionStart` 会重新注入 capsule —— 那是注入，不是压缩 hook，也没有被声明成压缩 hook。 |
 | worker 事件 | 没有 SubagentStart/SubagentStop。adapter 不声明它们；它用下文的契约门禁和 synthetic job 生命周期来*补偿*。补偿（compensation）是围绕 ZCode 确实会触发的那些事件所施加的强制行为，不是原生能力。 |
 | `overlay`、`skills`、`modelSelection`、`statusLine`、`crossSession` | 什么都没接线：没有个人 overlay 同步、没有 skill 安装器、没有 model 引导、没有状态行、没有跨会话协调。安装器除了 config.json 本身以外，从不在 ZCode 的 config dir 下放任何文件；`reason` 不需要文件，因为它通过下文的只读兼容（read-only compatibility）来解析。 |

@@ -77,6 +77,7 @@ raw summary):
 | `dispatch` / `tool_denied` | tool, allow, gate |
 | `job_start` / `job_stop` | agent type, job id, status, valid, retryable, error class, result tokens |
 | `agent_result` | valid, status, raw and compact envelope tokens |
+| `now_after_tool` | tool, chars (frontier reminder appended to a tool result) |
 | `tool_output_captured` | bytes, mode |
 | `compaction` / `session_stop` | trigger, capsule tokens, blocked, unlanded count |
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildPacket } from '../src/core/packet.mjs';
+import { buildPacket, nowReminder } from '../src/core/packet.mjs';
 import {
   initStore,
   updatePlanTask,
@@ -126,4 +126,28 @@ test('the packet reports what each section costs and what is about the decision'
     packet.sections.reduce((total, section) => total + section.tokens, 0),
     packet.packetTokens,
   );
+});
+
+test('the frontier reminder fires once per change and stays silent otherwise', () => {
+  const root = makeRoot();
+  assert.equal(nowReminder(root, { session: 'sess-1' }), null, 'no plan, no reminder');
+
+  writePlan(root, [
+    { id: 't1', title: 'wire it', status: 'in_progress', next_action: 'add the route' },
+    { id: 't2', title: 'test it', status: 'pending' },
+  ], { replace: true, session: 'sess-1' });
+  const first = nowReminder(root, { session: 'sess-1' });
+  assert.match(first, /^\[NOW\] \[in_progress\] t1 wire it — next: add the route/);
+  assert.equal(nowReminder(root, { session: 'sess-1' }), null, 'same frontier, no repeat');
+
+  updatePlanTask(root, 't1', { status: 'completed' }, 'sess-1');
+  const second = nowReminder(root, { session: 'sess-1' });
+  assert.match(second, /^\[NOW\] \[pending\] t2 test it/);
+});
+
+test('a packet already showing the frontier suppresses the reminder', () => {
+  const root = makeRoot();
+  writePlan(root, [{ id: 't1', title: 'wire it', status: 'pending' }], { replace: true, session: 'sess-1' });
+  buildPacket(root, { session: 'sess-1' });
+  assert.equal(nowReminder(root, { session: 'sess-1' }), null);
 });

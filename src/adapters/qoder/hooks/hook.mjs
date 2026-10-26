@@ -7,6 +7,7 @@ import {
 } from '../../../core/global.mjs';
 import { detectConfigDir, syncCapabilities } from '../install.mjs';
 import { conductorInjection, conductorTurnInjection, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
+import { nowReminder } from '../../../core/packet.mjs';
 import { failureVerdict } from '../../../core/errors.mjs';
 import {
   compactEnvelope,
@@ -64,6 +65,7 @@ import {
 } from '../../../core/hook-policy.mjs';
 
 const EVENT = process.argv[2] || 'Unknown';
+const HARNESS_MCP_TOOL = /^mcp__harness-enhance__enhance_/;
 
 function sessionIdOf(payload = {}) {
   return String(payload.session_id || payload.sessionId || '').trim();
@@ -443,8 +445,21 @@ async function onPostToolUse(payload, root, config) {
         parsed.value.warnings = [...(parsed.value.warnings || []), reminder];
       }
       const compact = compactEnvelope(parsed.value, config.envelope.maxTotalChars);
-      writeJson(hookJson('PostToolUse', { updatedToolOutput: compact }));
       syncPlanFromEnvelope(root, parsed.value, session);
+      // The frontier usually moved because this worker finished. Say where the
+      // conductor is now instead of letting it re-derive the next step.
+      const now = nowReminder(root, { session });
+      writeJson(hookJson('PostToolUse', {
+        updatedToolOutput: now ? `${compact}\n\n${now}` : compact,
+      }));
+      if (now) {
+        recordMetric(root, {
+          event: 'now_after_tool',
+          role: 'conductor',
+          tool,
+          chars: now.length,
+        }, session);
+      }
       log(root, {
         event: EVENT,
         role: 'conductor',
@@ -494,6 +509,25 @@ async function onPostToolUse(payload, root, config) {
         compact_chars: compactInvalid.length,
         compact_tokens: estimateTokens(compactInvalid),
       }, session);
+    }
+    return;
+  }
+
+  // Our own MCP results are ours to shape: append the frontier reminder when it
+  // moved, so the conductor sees the next action on the same message that
+  // carries the tool result.
+  if (conductor && response != null && HARNESS_MCP_TOOL.test(tool)) {
+    const now = nowReminder(root, { session });
+    const text = now ? extractText(response) : '';
+    if (now && text) {
+      writeJson(hookJson('PostToolUse', { updatedToolOutput: `${text}\n\n${now}` }));
+      recordMetric(root, {
+        event: 'now_after_tool',
+        role: 'conductor',
+        tool,
+        chars: now.length,
+      }, session);
+      log(root, { event: EVENT, role: 'conductor', tool, now_chars: now.length }, config);
     }
     return;
   }

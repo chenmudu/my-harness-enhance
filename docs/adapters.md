@@ -116,7 +116,7 @@ harness is hardcoded in routing.
 |---|---|
 | `hooks` | `install.mjs` merges hook entries for SessionStart, UserPromptSubmit, PreToolUse, SubagentStart, SubagentStop, PostToolUse, PreCompact, Stop. |
 | `subagents` | native worker delegation resolved by `core/capabilities.mjs`. |
-| `resultRewrite` | `hooks/hook.mjs` PostToolUse emits `updatedToolOutput`. |
+| `resultRewrite` | `hooks/hook.mjs` PostToolUse emits `updatedToolOutput`, including the `[NOW]` frontier reminder when it moved. |
 | `preCompact` | `hooks/hook.mjs` `onPreCompact`. |
 | `mcp` | stdio server `src/mcp/recall-server.mjs` registered via `mergeMcp`. |
 | `installer` | wrapped `installQoder` / `uninstallQoder` / `doctorQoder`. |
@@ -149,7 +149,7 @@ Not declared, because ZCode does not offer the mechanism:
 
 | Absent | Why |
 |---|---|
-| `resultRewrite` | ZCode PostToolUse has no updated-tool-output channel. The hook stores the artifact, records the job, logs — and emits nothing. |
+| `resultRewrite` | ZCode PostToolUse has no updated-tool-output channel. The hook stores the artifact, records the job, logs — and emits nothing. The `[NOW]` reminder therefore arrives with the next turn's packet. |
 | `preCompact` | No PreCompact event. Capsule checkpoints happen at `Stop`; a `SessionStart` with `source=compact` re-injects the capsule — that is injection, not a compaction hook, and is not claimed as one. |
 | worker events | No SubagentStart/SubagentStop. The adapter does not claim them; it *compensates* with the contract gate and synthetic job lifecycle below. A compensation is enforced behavior around the events ZCode does fire, not a native capability. |
 | `overlay`, `skills`, `modelSelection`, `statusLine`, `crossSession` | Nothing wired: no personal-overlay sync, no skill installer, no model steering, no status line, no cross-session coordination. The installer never places any file under the ZCode config dir except config.json itself; `reason` needs no file because it resolves through the read-only compatibility below. |

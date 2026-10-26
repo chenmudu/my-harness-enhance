@@ -294,7 +294,7 @@ capsule 的 NEXT 行是算出来的，不是猜的：
 | `PreToolUse` | conductor 工具白名单；按 agent 类型套用原生 worker 策略（readonly/leaf/notools/lead）；subagent 白名单 |
 | `SubagentStart` | 创建 job；注入角色 + worker 契约 + goal/验收标准 |
 | `SubagentStop` | 解析/存储 envelope；更新 job |
-| `PostToolUse` | 把 `Agent` 结果规范化成紧凑的 envelope；捕获过大的 worker 工具输出 |
+| `PostToolUse` | 把 `Agent` 结果规范化成紧凑的 envelope；捕获过大的 worker 工具输出；frontier 变化时追加 `[NOW]` |
 | `PreCompact` | 从状态重新生成 capsule（不是从逐字记录） |
 | `Stop` | 写 capsule；code worktree 未 land 时阻止完成 |
 

@@ -96,7 +96,7 @@ MCP 工具从 capsule 中取 `project: <PROJECT>`；若省略，server 会回退
 | `PreToolUse` | conductor 工具白名单；按 agent 类型应用原生 worker 策略；禁止原生 TaskCreate/Get/Update/List |
 | `SubagentStart` | 创建 job；注入角色 + envelope 契约；worker 都是叶子节点 |
 | `SubagentStop` | 解析/存储 envelope；更新 job；无效结果会加上 retryable + next |
-| `PostToolUse` | 规范化 conductor 的 `Agent` 结果；捕获过大的 worker 输出；无效结果会包含原始 artifact handle |
+| `PostToolUse` | 规范化 conductor 的 `Agent` 结果；捕获过大的 worker 输出；frontier 变化时追加 `[NOW]`；无效结果会包含原始 artifact handle |
 | `PreCompact` | 从状态重建 capsule |
 | `Stop` | 写 capsule；code worktree 未 land 时阻止完成 |
 
