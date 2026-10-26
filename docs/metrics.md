@@ -209,7 +209,30 @@ different windows, `summary.json` sets `context.comparable` to `false` and
 - `review`: 15 patches, each adding a small module with exactly one planted
   defect from a fixed vocabulary; the answer is the rule id, and the check
   compares it with the planted value. The work is judgment over the whole hunk,
-  so a keyword search cannot shortcut it.
+  so a keyword search cannot shortcut it. `--patch-size small|medium|large`
+  scales a patch to about 500, 2,000, and 8,000 lines.
+
+### Task-shape crossover (3 turns, one repeat, GLM-5.3-Flash)
+
+| patch lines | baseline credits | treatment credits | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 491 | 1.80 | 3.11 | 1.73x | 1.0 / 4.5 | 7,881 | 3,050 |
+| 1,931 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
+| 7,691 | 4.03 | 3.28 | 0.81x | 2.9 / 7.6 | 15,634 | 3,484 |
+
+The last row is not the same regime as the first two: the host refuses a whole
+Read above 25k tokens, so at 7,691 lines both arms sample the patch with
+`limit` reads and Grep. The baseline still answered 3/3, but by searching
+rather than reading, and it re-read the same samples in later turns (16
+re-reads against 0). What the layer isolates is paid once inside a worker; what
+the baseline samples stays in the conductor and is re-sent every turn.
+
+So the crossover is not a patch size. It is whether the input is read more than
+once: below the host's read cap the baseline reads once, cheaply, and the layer
+costs 1.4-1.7x plus 4.5-6.4x the wall time; above the cap both sides sample, and
+the layer wins on credits only because the sampling lands in a worker context.
+A long horizon moves this earlier, because the baseline re-sends everything it
+has accumulated on every turn; these probes are three turns and do not show it.
 
 ## Acceptance metrics
 

@@ -64,6 +64,10 @@ everything in one long session.
   attention density and behavior labels (next action, wrong task, re-read,
   recovery) are collected per turn, but the CLI's `context_usage_ratio` turned
   out to depend on a per-session denominator, so the ratio A/B is still open.
+- **Where it pays.** 1.7x and 1.4x the baseline's billed cost at 500 and
+  2,000-line inputs, 0.8x at 8,000 — where the host stops allowing whole-file
+  reads and both sides sample; the layer wins there only because its sampling is
+  paid once. Numbers and caveats: [docs/metrics.md](docs/metrics.md).
 - Still to validate: a wall-clock comparison that does not restart the CLI every
   turn, concurrent code integration conflicts, long-running compaction, and
   Codex/DSH adapters.

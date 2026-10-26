@@ -65,6 +65,10 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
   已逐轮采集，且重读已经消除；但 CLI 的 `context_usage_ratio`
   依赖会话级分母，跨 arm 比值的 A/B 还没有闭合，
   需要一次同窗口的复测才能定论。
+- **什么时候划算。** 500 行与 2,000 行输入时是 baseline 计费的 1.7 倍和 1.4 倍，
+  8,000 行时是 0.8 倍——但那时宿主不再允许整文件读取，两边都在抽样，
+  这层只因为抽样只付一次才赢。
+  数字与前提见 [docs/metrics.zh-CN.md](docs/metrics.zh-CN.md)。
 - 待验证：不重启 CLI 的 wall-clock 对比、并发代码集成冲突、
   长周期压缩、Codex/DSH adapter。
 
