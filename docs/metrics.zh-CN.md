@@ -192,6 +192,15 @@ runner 强制遵守的规则：
 fixture 的测试结果，以及 treatment arm 的 hook 计数。
 每次运行会写出 `summary.json` 和 `summary.md`，以及每个 run 的原始文件。
 
+该比率是最后一次请求的 `input_tokens / max_input_tokens`，裁剪到 0..1，
+而 token 明细字段本身被 CLI 置零。分母按会话而非按模型确定：CLI 解析到模型时
+为 200,000，回退时为 1,048,576，所以同一份内容在两个 arm 上的读数能差 5 倍。
+因此 runner 还会读取会话的 `runtime-config.contextWindow`，
+逐轮存下 `context_tokens = ratio × window`。
+两个 arm 报告的窗口不同时，`summary.json` 把 `context.comparable` 置为
+`false`；某个 arm 完全没报窗口时置为 `null`。
+`summary.md` 会声明这些比率只能作相对参考，不能跨 arm 比较。
+
 `--fixture-kind` 选择任务形状：
 
 - `library`（默认）：一个零依赖的小库，每轮新增一个函数，

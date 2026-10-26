@@ -53,7 +53,7 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
 
 ## 状态
 
-- **327/327 测试通过（Windows）**；CI 已在 macOS 与 Linux 上跑这套测试，但这两个平台还没有人工跑过。
+- **330/330 测试通过（Windows）**；CI 已在 macOS 与 Linux 上跑这套测试，但这两个平台还没有人工跑过。
 - Qoder 已在只读、写、验证会话上端到端验证；
   同一 workspace 下的两个并发会话各自持有独立的状态分片。
 - ZCode adapter 已实现项目级和全局模式；
@@ -61,10 +61,10 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
   synthetic job 补偿 SubagentStop。
   原生仍没有 result rewrite/SubagentStop/PreCompact。
 - **机制已验证；主指标还没有实现。**
-  conductor 每轮仍然收到完整策略和整份 capsule，
-  也没有任何东西在采注意力密度或行为信号
-  （下一步动作、做错任务、重读、恢复）。
-  现有的长周期 A/B 只测 token 增长。
+  packet 级注意力密度与行为标签（下一步动作、做错任务、重读、恢复）
+  已逐轮采集，且重读已经消除；但 CLI 的 `context_usage_ratio`
+  依赖会话级分母，跨 arm 比值的 A/B 还没有闭合，
+  需要一次同窗口的复测才能定论。
 - 待验证：不重启 CLI 的 wall-clock 对比、并发代码集成冲突、
   长周期压缩、Codex/DSH adapter。
 

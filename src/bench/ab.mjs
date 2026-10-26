@@ -469,12 +469,31 @@ function numberOrNull(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * `context_usage_ratio` is `input_tokens / max_input_tokens`, and the CLI falls
+ * back to 1,048,576 when it cannot resolve the model's window while the model
+ * table carries 200,000. The denominator is therefore per session, not per
+ * model: a bare ratio from two arms can be off by 5x before any content differs.
+ */
+export function contextWindowOf(entries) {
+  if (!Array.isArray(entries)) return null;
+  let window = null;
+  for (const entry of entries) {
+    if (entry?.type !== 'runtime-config') continue;
+    const value = Number(entry.contextWindow);
+    if (Number.isFinite(value) && value > 0) window = value;
+  }
+  return window;
+}
+
 function firstLine(text) {
   return String(text || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
 }
 
 export function summarizeTurns(turns = []) {
   const context = turns.map((turn) => turn.context_usage_ratio).filter((value) => value !== null);
+  const tokens = turns.map((turn) => turn.context_tokens).filter((value) => typeof value === 'number' && Number.isFinite(value));
+  const windows = turns.map((turn) => turn.context_window).filter((value) => typeof value === 'number' && value > 0);
   const sum = turns.reduce((total, turn) => total + (turn.duration_ms || 0), 0);
   const lastHooks = [...turns].reverse().find((turn) => turn.hooks)?.hooks || null;
   const first = context.length ? context[0] : null;
@@ -492,6 +511,10 @@ export function summarizeTurns(turns = []) {
       delta: first !== null && last !== null ? Math.round((last - first) * 10000) / 10000 : null,
       avg: context.length
         ? Math.round((context.reduce((total, value) => total + value, 0) / context.length) * 10000) / 10000
+        : null,
+      window: windows.length ? windows[windows.length - 1] : null,
+      tokens: tokens.length
+        ? { first: tokens[0], last: tokens[tokens.length - 1], delta: tokens[tokens.length - 1] - tokens[0] }
         : null,
     },
     checks_ok: turns.filter((turn) => turn.check?.ok).length,
@@ -542,6 +565,8 @@ async function runArm({
       const refusal = Array.isArray(payload?.errors) && payload.errors.length
         ? String(payload.errors[0])
         : '';
+      const ratio = numberOrNull(payload?.usage?.context_usage_ratio ?? payload?.context_usage_ratio);
+      const window = contextWindowOf(readTranscript(transcriptPath(configDir, workspace, sessionId)));
       turns.push({
         index: index + 1,
         started_at: started,
@@ -551,9 +576,9 @@ async function runArm({
         exit_code: payload ? 0 : -1,
         timed_out: Boolean(result.timedOut),
         session_id: payload?.session_id || sessionId,
-        context_usage_ratio: numberOrNull(
-          payload?.usage?.context_usage_ratio ?? payload?.context_usage_ratio,
-        ),
+        context_usage_ratio: ratio,
+        context_window: window,
+        context_tokens: ratio !== null && window ? Math.round(ratio * window) : null,
         result_chars: String(payload?.result || '').length,
         permission_denials: Array.isArray(payload?.permission_denials)
           ? payload.permission_denials.length
@@ -595,6 +620,32 @@ function average(values) {
   return numbers.length ? Math.round((numbers.reduce((total, value) => total + value, 0) / numbers.length) * 10000) / 10000 : null;
 }
 
+function contextComparability(arms) {
+  const entries = Object.entries(arms);
+  if (entries.length < 2) return { comparable: true, windows: {}, warning: null };
+  const windows = {};
+  for (const [arm, value] of entries) windows[arm] = value.context.window ?? null;
+  const missing = entries.filter(([, value]) => !value.context.window).map(([arm]) => arm);
+  if (missing.length) {
+    return {
+      comparable: null,
+      windows,
+      warning:
+        `${missing.join(', ')} did not report a context window; ` +
+        'its ratios use the CLI fallback denominator and must not be compared with another arm.',
+    };
+  }
+  const distinct = new Set(entries.map(([, value]) => value.context.window));
+  if (distinct.size > 1) {
+    return {
+      comparable: false,
+      windows,
+      warning: `arms reported different context windows (${entries.map(([arm, value]) => `${arm} ${value.context.window}`).join(', ')}); compare token counts, not ratios.`,
+    };
+  }
+  return { comparable: true, windows, warning: null };
+}
+
 export function summarizeAb(runs, meta = {}) {
   const byArm = {};
   for (const run of runs) {
@@ -606,6 +657,9 @@ export function summarizeAb(runs, meta = {}) {
       final_tests_ok: 0,
       context_delta: [],
       context_last: [],
+      context_tokens_delta: [],
+      context_tokens_last: [],
+      context_windows: [],
       duration_ms: 0,
       denials: 0,
       behavior: null,
@@ -617,6 +671,9 @@ export function summarizeAb(runs, meta = {}) {
     bucket.final_tests_ok += run.summary.final_check?.ok ? 1 : 0;
     bucket.context_delta.push(run.summary.context.delta);
     bucket.context_last.push(run.summary.context.last);
+    bucket.context_tokens_delta.push(run.summary.context.tokens?.delta ?? null);
+    bucket.context_tokens_last.push(run.summary.context.tokens?.last ?? null);
+    bucket.context_windows.push(run.summary.context.window ?? null);
     bucket.duration_ms += run.summary.duration_ms;
     bucket.denials += Object.values(run.summary.hooks?.denials || {}).reduce((total, value) => total + value, 0);
     if (run.behavior?.totals) {
@@ -638,6 +695,9 @@ export function summarizeAb(runs, meta = {}) {
       context: {
         delta_avg: average(bucket.context_delta),
         last_avg: average(bucket.context_last),
+        tokens_delta_avg: average(bucket.context_tokens_delta),
+        tokens_last_avg: average(bucket.context_tokens_last),
+        window: bucket.context_windows.filter((value) => typeof value === 'number' && value > 0).pop() ?? null,
       },
       duration_ms: bucket.duration_ms,
       denials: bucket.denials,
@@ -649,6 +709,7 @@ export function summarizeAb(runs, meta = {}) {
     model: meta.model || DEFAULT_MODEL,
     turns: meta.turns || DEFAULT_TURNS,
     repeats: meta.repeats || DEFAULT_REPEATS,
+    context: contextComparability(arms),
     arms,
     runs: runs.map((run) => ({
       arm: run.arm,
@@ -667,16 +728,23 @@ export function renderSummaryMarkdown(summary) {
   lines.push(`- turns per run: ${summary.turns}`);
   lines.push(`- repeats: ${summary.repeats}`);
   lines.push('');
-  lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx delta avg | ctx last avg | minutes | denials |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | ctx delta avg | ctx last avg | minutes | denials |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const [arm, value] of Object.entries(summary.arms)) {
     lines.push(
       `| ${arm} | ${value.runs} | ${value.turns} | ${value.cli_failures} | ${value.turn_timeouts || 0} | ` +
-      `${value.final_tests_ok}/${value.runs} | ${value.context.delta_avg ?? 'n/a'} | ` +
-      `${value.context.last_avg ?? 'n/a'} | ${(value.duration_ms / 60000).toFixed(1)} | ${value.denials} |`,
+      `${value.final_tests_ok}/${value.runs} | ${value.context.tokens_last_avg ?? 'n/a'} | ` +
+      `${value.context.delta_avg ?? 'n/a'} | ${value.context.last_avg ?? 'n/a'} | ` +
+      `${(value.duration_ms / 60000).toFixed(1)} | ${value.denials} |`,
     );
   }
   lines.push('');
+  if (summary.context?.warning) {
+    lines.push(`> ${summary.context.warning}`);
+    lines.push('');
+  }
+  lines.push('Context tokens are `context_usage_ratio` times the session-reported window;');
+  lines.push('ratios from two arms are only comparable when both reported the same window.');
   lines.push('Context values are the model-reported `context_usage_ratio` after each turn.');
   lines.push('Denials are hook-reported conductor or worker tool denials.');
   lines.push('Timeouts are turns the runner cut at the per-turn limit; they are counted in cli failures too.');
@@ -804,7 +872,10 @@ export async function runAb(options = {}) {
         `[ab] ${arm} repeat ${repeat + 1}/${repeats}: ` +
         `${run.summary.turns - run.summary.cli_failed}/${run.summary.turns} turns, ` +
         `final tests ${run.summary.final_check?.ok ? 'ok' : 'failed'}, ` +
-        `ctx ${run.summary.context.first ?? 'n/a'} -> ${run.summary.context.last ?? 'n/a'}`,
+        `ctx ${run.summary.context.first ?? 'n/a'} -> ${run.summary.context.last ?? 'n/a'}` +
+        (run.summary.context.tokens
+          ? ` (~${run.summary.context.tokens.last} tok at window ${run.summary.context.window ?? 'unknown'})`
+          : ''),
       );
     }
   }

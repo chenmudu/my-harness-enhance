@@ -6,12 +6,14 @@ import path from 'node:path';
 import {
   assertIsolatedDir,
   configHasHarness,
+  contextWindowOf,
   createFixture,
   createSessionProcess,
   longHorizonPrompts,
   parseCliResult,
   parseTestCounts,
   prepareWorkspace,
+  renderSummaryMarkdown,
   runAb,
   runFixtureCheck,
   sessionInputLine,
@@ -135,6 +137,70 @@ test('turn summary tracks context growth and hook denials', () => {
   assert.equal(summary.context.max, 0.4);
   assert.equal(summary.checks_ok, 1);
   assert.equal(summary.hooks.denials.allowlist, 1);
+});
+
+test('the session runtime-config supplies the ratio denominator', () => {
+  assert.equal(contextWindowOf(null), null);
+  assert.equal(contextWindowOf([]), null);
+  assert.equal(
+    contextWindowOf([
+      { type: 'runtime-config', contextWindow: null },
+      { type: 'assistant', message: {} },
+      { type: 'runtime-config', contextWindow: 200000 },
+      { type: 'runtime-config', contextWindow: null },
+    ]),
+    200000,
+  );
+  assert.equal(
+    contextWindowOf([{ type: 'runtime-config', contextWindow: 0 }, { type: 'runtime-config', contextWindow: 'x' }]),
+    null,
+  );
+});
+
+test('a reported window turns ratios into comparable token counts', () => {
+  const summary = summarizeTurns([
+    { cli_ok: true, duration_ms: 1, context_usage_ratio: 0.1, context_window: 200000, context_tokens: 20000 },
+    { cli_ok: true, duration_ms: 1, context_usage_ratio: 0.25, context_window: 200000, context_tokens: 50000 },
+  ]);
+  assert.equal(summary.context.window, 200000);
+  assert.deepEqual(summary.context.tokens, { first: 20000, last: 50000, delta: 30000 });
+
+  const unknown = summarizeTurns([{ cli_ok: true, duration_ms: 1, context_usage_ratio: 0.25 }]);
+  assert.equal(unknown.context.window, null);
+  assert.equal(unknown.context.tokens, null);
+  assert.equal(unknown.context.last, 0.25);
+});
+
+test('summaries refuse a ratio comparison when the arms used different denominators', () => {
+  const run = (arm, window) => ({
+    arm,
+    repeat: 1,
+    session_id: `${arm}-1`,
+    summary: summarizeTurns([
+      {
+        cli_ok: true,
+        duration_ms: 1,
+        context_usage_ratio: 0.1,
+        context_window: window,
+        context_tokens: window ? Math.round(0.1 * window) : null,
+      },
+    ]),
+  });
+
+  const missing = summarizeAb([run('baseline', null), run('treatment', 200000)], { turns: 1, repeats: 1 });
+  assert.equal(missing.context.comparable, null);
+  assert.match(missing.context.warning, /baseline did not report a context window/);
+
+  const mismatch = summarizeAb([run('baseline', 1048576), run('treatment', 200000)], { turns: 1, repeats: 1 });
+  assert.equal(mismatch.context.comparable, false);
+  assert.match(mismatch.context.warning, /different context windows/);
+  const markdown = renderSummaryMarkdown(mismatch);
+  assert.match(markdown, /ctx tokens last/);
+  assert.match(markdown, /different context windows/);
+
+  const same = summarizeAb([run('baseline', 200000), run('treatment', 200000)], { turns: 1, repeats: 1 });
+  assert.equal(same.context.comparable, true);
+  assert.equal(same.context.warning, null);
 });
 
 test('a turn the runner cut at its limit is counted as a timeout, not a CLI crash', () => {

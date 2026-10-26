@@ -53,17 +53,17 @@ everything in one long session.
 
 ## Status
 
-- **327/327 tests pass (Windows)**; a CI matrix runs the suite on macOS and Linux, but those platforms have not been run by hand yet.
+- **330/330 tests pass (Windows)**; a CI matrix runs the suite on macOS and Linux, but those platforms have not been run by hand yet.
 - Qoder validated end-to-end for read-only, write, and verification sessions; two
   concurrent sessions in one workspace keep separate state shards.
 - ZCode adapter implemented in project and global modes; `reason` uses read-only
   Explore compatibility, worker contract is mandatory, and synthetic jobs stand in
   for SubagentStop. Raw result rewrite/SubagentStop/PreCompact are still native
   absences.
-- **The mechanism is validated; the primary metric is not.** The conductor still
-  receives the full policy and the whole capsule on every turn, and nothing
-  collects attention density or behavior signals (next action, wrong task,
-  re-read, recovery). The long-horizon A/B measures token growth only.
+- **The mechanism is validated; the primary metric is not.** Packet-level
+  attention density and behavior labels (next action, wrong task, re-read,
+  recovery) are collected per turn, but the CLI's `context_usage_ratio` turned
+  out to depend on a per-session denominator, so the ratio A/B is still open.
 - Still to validate: a wall-clock comparison that does not restart the CLI every
   turn, concurrent code integration conflicts, long-running compaction, and
   Codex/DSH adapters.

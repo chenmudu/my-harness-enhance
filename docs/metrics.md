@@ -11,7 +11,7 @@ proxy:
 | Quantity | Role | Status |
 | --- | --- | --- |
 | attention density | primary metric | not implemented |
-| `b` (growth per turn) | budget | collected per turn as `context_usage_ratio` |
+| `b` (growth per turn) | budget | collected per turn as `context_usage_ratio` × session window |
 | `M_T` (final main context) | window check | simulated only |
 | `B` (cumulative input) | cost | not collected |
 | `C` (billed cost) | economics | not collected |
@@ -93,7 +93,7 @@ report aggregates all entries and lists per-session counts.
 | Quantity | Status | Source |
 |---|---|---|
 | `M_T` (final main context) | simulated only | `bench`, `demo` |
-| `b` (growth per turn) | collected per turn | `context_usage_ratio` in `mhe ab` |
+| `b` (growth per turn) | collected per turn | `context_usage_ratio` × window in `mhe ab` |
 | `B` (cumulative input) | not collected | needs per-turn context accounting |
 | `C` (billed cost) | not collected | needs provider billing data |
 | Composition | measured from the transcript | CLI session `.jsonl` |
@@ -191,6 +191,15 @@ Rules the runner enforces:
 Per turn the runner records the model-reported `context_usage_ratio`, the CLI
 duration, the fixture test result, and the hook counters of the treatment arm.
 The run writes `summary.json` and `summary.md` next to the raw per-run files.
+
+The ratio is `input_tokens / max_input_tokens` for the last request, clamped to
+0..1, with the token fields themselves zeroed by the CLI. The denominator is per
+session rather than per model: 200,000 when the CLI resolves the model, 1,048,576
+when it falls back, so the same payload can read 5x apart across two arms. The
+runner therefore also reads the session's `runtime-config.contextWindow` and
+stores `context_tokens = ratio × window` per turn. When the arms reported
+different windows, `summary.json` sets `context.comparable` to `false` and
+`summary.md` warns that the ratios are relative only and must not be compared.
 
 `--fixture-kind` picks the task shape:
 
