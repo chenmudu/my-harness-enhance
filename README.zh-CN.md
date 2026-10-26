@@ -53,7 +53,7 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
 
 ## 状态
 
-- **330/330 测试通过（Windows）**；CI 已在 macOS 与 Linux 上跑这套测试，但这两个平台还没有人工跑过。
+- **全套测试在 Windows 上通过**；CI 已在 macOS 与 Linux 上跑这套测试，但这两个平台还没有人工跑过。
 - Qoder 已在只读、写、验证会话上端到端验证；
   同一 workspace 下的两个并发会话各自持有独立的状态分片。
 - ZCode adapter 已实现项目级和全局模式；
@@ -65,10 +65,10 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
   已逐轮采集，且重读已经消除；但 CLI 的 `context_usage_ratio`
   依赖会话级分母，跨 arm 比值的 A/B 还没有闭合，
   需要一次同窗口的复测才能定论。
-- **什么时候划算。** 3 轮时，500 行与 2,000 行输入分别是 baseline 计费的 1.7 倍和 1.4 倍；
-  同样 2,000 行跑到 15 轮，变成 0.83 倍。
-  8,000 行时宿主不再允许整文件读取，两边都在抽样。
-  省下来的是"留在 conductor 里的内容"：baseline 读过的东西之后每一轮都要重发。
+- **什么时候划算。** 目前还不划算。只算 conductor 时，3 轮的 500 行与 2,000 行
+  输入是 baseline 的 1.7 倍和 1.4 倍，15 轮是 0.83 倍；把 worker 的 transcript
+  加回来，已测的每个形状都变成亏损（2.91x、2.22x、2.49x、1.43x）。
+  省下来的确实是"留在 conductor 里的内容"，但还覆盖不了 worker 成本。
   数字与前提见 [docs/metrics.zh-CN.md](docs/metrics.zh-CN.md)。
 - 待验证：不重启 CLI 的 wall-clock 对比、并发代码集成冲突、
   长周期压缩、Codex/DSH adapter。

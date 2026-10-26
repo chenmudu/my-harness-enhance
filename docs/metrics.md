@@ -10,7 +10,7 @@ proxy:
 
 | Quantity | Role | Status |
 | --- | --- | --- |
-| attention density | primary metric | not implemented |
+| attention density | primary metric | packet share collected; payload share pending |
 | `b` (growth per turn) | budget | collected per turn as `context_usage_ratio` × session window |
 | `M_T` (final main context) | window check | simulated only |
 | `B` (cumulative input) | cost | not collected |
@@ -26,7 +26,7 @@ reduction.
 
 `estimateTokens` is dependency-free and deliberately rough:
 
-- CJK code points: ~1 token each;
+- CJK code points: ~0.6 token each (1.0 overstates Chinese payloads by ~1.7x);
 - other non-space characters: ~0.28 token each (about 3.6 chars/token);
 - whitespace: 0.
 
@@ -45,11 +45,16 @@ is approximate, so only compare numbers produced by the same estimator.
 
 Current output on this machine:
 
-| scenario | baseline main | conductor main | reduction | baseline fits 180k | conductor fits 180k |
-|---|---:|---:|---:|---|---|
-| light (3 steps) | 34,122 | 7,170 | 79.0% | yes | yes |
-| medium (8 steps) | 92,623 | 9,061 | 90.2% | yes | yes |
-| heavy (16 steps) | 244,023 | 12,741 | 94.8% | no | yes |
+| scenario | fixed | artifacts | assembly | conductor total | baseline total | reduction |
+|---|---:|---:|---:|---:|---:|---:|
+| light (3 steps) | 5,448 | 1,722 | 0 | 7,170 | 34,122 | 79.0% |
+| medium (8 steps) | 5,448 | 3,613 | 0 | 9,061 | 92,623 | 90.2% |
+| heavy (16 steps) | 5,448 | 7,293 | 0 | 12,741 | 244,023 | 94.8% |
+
+`fixed` is system plus tool schemas (paid on every request), `artifacts` is the
+layer's own state and envelopes, `assembly` is task content the baseline keeps
+in the main context. The layer moves assembly out and pays a small fixed and
+artifact cost instead.
 
 Assumptions per scenario: system 8KB, full tools 75KB, conductor tools 11KB,
 state 3KB, per-step tool output and reasoning as set in `src/core/metrics.mjs`.
@@ -73,10 +78,11 @@ raw summary):
 | Event | Recorded fields |
 |---|---|
 | `session_start` | model, source, session id, `session`, capsule chars/tokens |
-| `prompt_submitted` | prompt chars, goal chars, capsule tokens, injected chars/tokens, changed sections |
+| `prompt_submitted` | prompt chars, goal chars, capsule tokens, injected chars/tokens, mode (anchor/delta), changed sections |
 | `dispatch` / `tool_denied` | tool, allow, gate |
 | `job_start` / `job_stop` | agent type, job id, status, valid, retryable, error class, result tokens |
 | `agent_result` | valid, status, raw and compact envelope tokens |
+| `behavior_label` | turn, next-action hit, wrong-task count, re-reads, failed, recovered (written by `mhe ab`) |
 | `now_after_tool` | tool, chars (frontier reminder appended to a tool result) |
 | `tool_output_captured` | bytes, mode |
 | `compaction` / `session_stop` | trigger, capsule tokens, blocked, unlanded count |
@@ -96,15 +102,22 @@ report aggregates all entries and lists per-session counts.
 | `M_T` (final main context) | simulated only | `bench`, `demo` |
 | `b` (growth per turn) | collected per turn | `context_usage_ratio` × window in `mhe ab` |
 | `B` (cumulative input) | not collected | needs per-turn context accounting |
-| `C` (billed cost) | collected per run | `credits` in the CLI transcript |
+| `C` (billed cost) | collected per run | conductor plus `subagents/agent-*.jsonl` credits in `mhe ab` |
 | Composition | measured from the transcript | assistant / tool results / worker results |
 | Envelope / capsule tokens | collected | hook telemetry |
-| Attention density | packet share collected; behavior side missing | `prompt_submitted` packet/relevant tokens |
+| Behavior labels | collected per run | `behavior_label` rows written by `mhe ab` |
+| Attention density | packet share collected; payload share is a separate number | `prompt_submitted` packet/relevant/injected tokens |
 
 `density` is `relevant_tokens / packet_tokens`, where relevant means everything
 outside the PARKED and MORE sections. It says how much of the packet is about the
 current decision; it does not say the model acted on it, which is what the
 behavior labels are for.
+
+The packet share covers only the injected delta; a request's payload is the whole
+conversation. Report both numbers: `density` (packet composition) and injected
+tokens over `context_tokens` (payload share). Provider input/output splits stay
+unavailable when the CLI zeroes those usage fields, and the report says so
+instead of inventing them.
 
 The hook cannot see the full main context, so `agent_result.compact_tokens` is
 the best per-dispatch proxy for what enters it, and composition needs the CLI
@@ -183,15 +196,24 @@ Rules the runner enforces:
   `~/.zcode` are rejected, and the baseline arm must not contain harness hooks;
 - the treatment state home is a separate `MY_HARNESS_ENHANCE_HOME`;
 - the model is pinned; `Auto` is rejected;
+- both arms get the same explicit `--context-window` (default 200,000); when the
+  arms still report different windows the run is invalid and its ratios withdrawn;
+- `--repeats` is reported as median [min-max]; under three runs is a smoke test;
+- credits sum the conductor session and every `subagents/agent-*.jsonl`; a run
+  without worker usage is labelled `conductor-only`;
 - results are written outside the repository (default
   `~/.my-harness-enhance/ab-results/<stamp>`);
 - a turn that returns `is_error` is recorded with the CLI's own error text; the
-  free `qfmodel` has a daily usage cap, so a long run can end with `error_code`
+  free model tier has a daily usage cap, so a long run can end with `error_code`
   110 rather than a result.
 
 Per turn the runner records the model-reported `context_usage_ratio`, the CLI
 duration, the fixture test result, and the hook counters of the treatment arm.
 The run writes `summary.json` and `summary.md` next to the raw per-run files.
+
+Each run also leaves a per-arm `workspace/` under the output directory. Keep
+`summary.json`, `summary.md` and `runs/*/result.json`, then delete the
+workspaces; `npm test` uses one disposable temp root instead of the real one.
 
 The ratio is `input_tokens / max_input_tokens` for the last request, clamped to
 0..1, with the token fields themselves zeroed by the CLI. The denominator is per
@@ -216,7 +238,7 @@ different windows, `summary.json` sets `context.comparable` to `false` and
 
 Three turns, three patch sizes:
 
-| patch lines | baseline credits | treatment credits | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
+| patch lines | baseline credits (conductor) | treatment credits (conductor) | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 491 | 1.80 | 3.11 | 1.73x | 1.0 / 4.5 | 7,881 | 3,050 |
 | 1,931 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
@@ -224,7 +246,7 @@ Three turns, three patch sizes:
 
 Fifteen turns at 1,931 lines, same configuration, only the horizon changed:
 
-| turns | baseline credits | treatment credits | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
+| turns | baseline credits (conductor) | treatment credits (conductor) | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 3 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
 | 15 | 23.66 | 19.59 | 0.83x | 6.7 / 21.8 | 98,535 | 13,280 |
@@ -234,10 +256,9 @@ the baseline reads stays in the conductor and is re-sent on every later
 request; the layer reads inside workers and only the result comes back. Over
 fifteen turns that is 98.5k tokens of accumulated patch against 13.3k.
 
-Credits track requests and context together, not either one: at fifteen turns
-the treatment makes 2.4x the requests (78 conductor + 47 worker against 52) and
-is still 17% cheaper, because its per-request context stays smaller. Wall time
-moves the other way, 3.3x.
+Those tables count conductor credits only. Adding the worker transcripts turns
+every measured shape into a loss: 2.91x, 2.22x and 2.49x at three turns, and
+1.43x at fifteen. The horizon narrows the gap but has not crossed 1.0x.
 
 Two caveats. At 7,691 lines the host refuses a whole `Read` above 25k tokens, so
 both arms sample with `limit` reads and Grep; that row measures where sampling
@@ -248,7 +269,7 @@ lines, 2 at 1,931 lines / 3 turns, 0 at 1,931 lines / 15 turns.
 
 | Metric | What it proves | Target |
 |---|---|---|
-| Attention density | the conductor sees what the decision needs | every injected block maps to a current decision; not measured yet |
+| Attention density | the conductor sees what the decision needs | packet share per turn plus payload share; behavior labels per run |
 | Main context growth (`b`) | execution detail stays out of the main context | below baseline on the same task shape; not demonstrated yet |
 | Tool-schema share | conductor tool surface is small | <25% of main context |
 | Invalid envelope leak rate | contract enforcement works | 0 raw invalid blobs in main context |

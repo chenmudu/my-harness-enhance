@@ -8,11 +8,15 @@ import { canonicalPath, projectKey } from '../core/state-root.mjs';
 import { sessionKey } from '../core/store.mjs';
 import { summarizeMetrics } from '../core/metrics.mjs';
 import { buildReviewFixture, checkReviewAnswers, PATCH_SIZES, reviewPrompts } from './review-fixture.mjs';
-import { readTranscript, summarizeBehavior, summarizeComposition, summarizeCost, transcriptPath } from './behavior.mjs';
+import { readTranscript, summarizeBehavior, summarizeComposition, summarizeCost, transcriptPath, workerTranscriptPaths } from './behavior.mjs';
 
 export const DEFAULT_MODEL = 'GLM-5.3-Flash';
 export const DEFAULT_TURNS = 15;
 export const DEFAULT_REPEATS = 2;
+// Both arms get the same explicit window so `context_tokens` is comparable.
+// Without it the baseline session falls back to 1,048,576 while the treatment
+// reports 200,000, and the two ratios differ by 5x before any content differs.
+export const DEFAULT_CONTEXT_WINDOW = 200000;
 export const ARMS = ['baseline', 'treatment'];
 
 const STRIPPED_ENV = [
@@ -326,8 +330,36 @@ export function sessionInputLine(prompt) {
   })}\n`;
 }
 
-function cliSessionArgs({ configDir, model, sessionId }) {
-  return [
+/**
+ * Behavior labels are deterministic per transcript, so the run writes them into
+ * the same metrics file the hooks use. `mhe report` can then print density and
+ * behavior side by side instead of leaving the labels only in the run summary.
+ */
+export function appendBehaviorLabels(treatmentHome, workspace, sessionId, behavior) {
+  const rows = Array.isArray(behavior?.turns) ? behavior.turns : [];
+  if (!rows.length) return 0;
+  const file = path.join(treatmentHome, 'projects', projectKey(workspace), 'metrics.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const key = sessionKey(sessionId);
+  const at = new Date().toISOString();
+  const lines = rows.map((row) => `${JSON.stringify({
+    at,
+    event: 'behavior_label',
+    role: 'conductor',
+    session: key,
+    turn: row.turn,
+    next_action_hit: Boolean(row.hit),
+    wrong_task: row.wrongTask || 0,
+    re_read: row.reRead || 0,
+    failed: Boolean(row.failed),
+    recovered: row.recovered === true,
+  })}\n`);
+  fs.appendFileSync(file, lines.join(''), 'utf8');
+  return rows.length;
+}
+
+export function cliSessionArgs({ configDir, model, sessionId, contextWindow = 0 }) {
+  const args = [
     '--config-dir', configDir,
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
@@ -336,6 +368,8 @@ function cliSessionArgs({ configDir, model, sessionId }) {
     '--permission-mode', 'bypass_permissions',
     '--session-id', sessionId,
   ];
+  if (Number(contextWindow) > 0) args.push('--context-window', String(Number(contextWindow)));
+  return args;
 }
 
 /**
@@ -534,6 +568,7 @@ async function runArm({
   treatmentHome,
   workspace,
   model,
+  contextWindow,
   timeoutMs,
   checkTimeoutMs,
   runSession,
@@ -548,7 +583,7 @@ async function runArm({
     workspace,
     arm,
     treatmentHome,
-    args: cliSessionArgs({ configDir, model, sessionId }),
+    args: cliSessionArgs({ configDir, model, sessionId, contextWindow }),
     env: turnEnv({ arm, sessionId, treatmentHome }),
   });
   let stopped = '';
@@ -620,6 +655,20 @@ function average(values) {
   return numbers.length ? Math.round((numbers.reduce((total, value) => total + value, 0) / numbers.length) * 10000) / 10000 : null;
 }
 
+function median(values) {
+  const numbers = values.filter((value) => typeof value === 'number' && Number.isFinite(value)).sort((a, b) => a - b);
+  if (!numbers.length) return null;
+  const middle = Math.floor(numbers.length / 2);
+  const value = numbers.length % 2 ? numbers[middle] : (numbers[middle - 1] + numbers[middle]) / 2;
+  return Math.round(value * 10000) / 10000;
+}
+
+function span(values) {
+  const numbers = values.filter((value) => typeof value === 'number' && Number.isFinite(value));
+  if (!numbers.length) return { min: null, max: null };
+  return { min: Math.min(...numbers), max: Math.max(...numbers) };
+}
+
 function contextComparability(arms) {
   const entries = Object.entries(arms);
   if (entries.length < 2) return { comparable: true, windows: {}, warning: null };
@@ -665,6 +714,14 @@ export function summarizeAb(runs, meta = {}) {
       behavior: null,
       composition: null,
       credits: 0,
+      credit_runs: [],
+      conductor_credits: 0,
+      worker_credits: 0,
+      conductor_requests: 0,
+      worker_requests: 0,
+      duration_runs: [],
+      cost_sources: new Set(),
+      provider: { available: false, input: 0, output: 0, cacheCreation: 0, cacheRead: 0 },
     };
     bucket.runs += 1;
     bucket.turns += run.summary.turns;
@@ -695,7 +752,26 @@ export function summarizeAb(runs, meta = {}) {
         bucket.composition.by_tool[name] = (bucket.composition.by_tool[name] || 0) + tokens;
       }
     }
-    if (run.cost) bucket.credits += run.cost.credits || 0;
+    if (run.cost) {
+      const cost = run.cost;
+      const conductorCredits = Number(cost.conductor?.credits ?? cost.credits) || 0;
+      const workerCredits = Number(cost.worker?.credits) || 0;
+      bucket.credit_runs.push(Number(cost.total?.credits ?? conductorCredits + workerCredits) || 0);
+      bucket.conductor_credits += conductorCredits;
+      bucket.worker_credits += workerCredits;
+      bucket.conductor_requests += Number(cost.conductor?.requests ?? cost.requests) || 0;
+      bucket.worker_requests += Number(cost.worker?.requests) || 0;
+      bucket.credits += conductorCredits + workerCredits;
+      bucket.cost_sources.add(cost.worker ? 'conductor+worker' : 'conductor-only');
+      if (cost.provider?.available) {
+        bucket.provider.available = true;
+        bucket.provider.input += Number(cost.provider.input) || 0;
+        bucket.provider.output += Number(cost.provider.output) || 0;
+        bucket.provider.cacheCreation += Number(cost.provider.cacheCreation) || 0;
+        bucket.provider.cacheRead += Number(cost.provider.cacheRead) || 0;
+      }
+    }
+    bucket.duration_runs.push(run.summary.duration_ms || 0);
     byArm[run.arm] = bucket;
   }
   const arms = {};
@@ -718,15 +794,30 @@ export function summarizeAb(runs, meta = {}) {
       behavior: bucket.behavior,
       composition: bucket.composition,
       credits: Math.round(bucket.credits * 10000) / 10000,
+      credits_median: median(bucket.credit_runs),
+      credits_min: span(bucket.credit_runs).min,
+      credits_max: span(bucket.credit_runs).max,
+      conductor_credits: Math.round(bucket.conductor_credits * 10000) / 10000,
+      worker_credits: Math.round(bucket.worker_credits * 10000) / 10000,
+      conductor_requests: bucket.conductor_requests,
+      worker_requests: bucket.worker_requests,
+      cost_source: bucket.cost_sources.size === 0 || bucket.cost_sources.has('conductor-only')
+        ? 'conductor-only'
+        : 'conductor+worker',
+      provider: bucket.provider,
+      minutes_median: median(bucket.duration_runs.map((value) => value / 60000)),
     };
   }
+  const context = contextComparability(arms);
   return {
     generated_at: new Date().toISOString(),
     model: meta.model || DEFAULT_MODEL,
     turns: meta.turns || DEFAULT_TURNS,
     repeats: meta.repeats || DEFAULT_REPEATS,
+    reliable: Number(meta.repeats) >= 3,
     patch_size: meta.patchSize || null,
-    context: contextComparability(arms),
+    contextWindow: meta.contextWindow ?? null,
+    context: { ...context, valid: context.comparable === true },
     arms,
     runs: runs.map((run) => ({
       arm: run.arm,
@@ -746,21 +837,41 @@ export function renderSummaryMarkdown(summary) {
   lines.push(`- repeats: ${summary.repeats}`);
   if (summary.patch_size) lines.push(`- patch size: ${summary.patch_size}`);
   lines.push('');
-  lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | credits | assistant | tool results | worker results | minutes | denials |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | credits med [min-max] | conductor | worker | assistant | tool results | worker results | minutes | denials |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const [arm, value] of Object.entries(summary.arms)) {
     const c = value.composition;
+    const credits = value.credits_median === null || value.credits_median === undefined
+      ? (value.credits ?? 'n/a')
+      : `${value.credits_median} [${value.credits_min}-${value.credits_max}]`;
+    const minutes = value.minutes_median === null || value.minutes_median === undefined
+      ? (value.duration_ms / 60000).toFixed(1)
+      : value.minutes_median.toFixed(1);
     lines.push(
       `| ${arm} | ${value.runs} | ${value.turns} | ${value.cli_failures} | ${value.turn_timeouts || 0} | ` +
       `${value.final_tests_ok}/${value.runs} | ${value.context.tokens_last_avg ?? 'n/a'} | ` +
-      `${value.credits ?? 'n/a'} | ${c ? c.assistant : 'n/a'} | ${c ? c.tool_results : 'n/a'} | ` +
-      `${c ? c.worker_results : 'n/a'} | ${(value.duration_ms / 60000).toFixed(1)} | ${value.denials} |`,
+      `${credits} | ${value.conductor_credits ?? value.credits ?? 'n/a'} | ${value.worker_credits ?? 'n/a'} | ` +
+      `${c ? c.assistant : 'n/a'} | ${c ? c.tool_results : 'n/a'} | ` +
+      `${c ? c.worker_results : 'n/a'} | ${minutes} | ${value.denials} |`,
     );
   }
   lines.push('');
   lines.push('Credits are what the CLI billed; the three content columns are estimated tokens from the transcript');
+  lines.push('Credits sum the conductor session and every `subagents/agent-*.jsonl`; `conductor-only` means the run could not see worker usage.');
+  const providers = Object.values(summary.arms).map((value) => value.provider);
+  lines.push(providers.some((provider) => provider?.available)
+    ? 'Provider input/output tokens come from the CLI usage block.'
+    : 'Provider input/output split is unavailable: the CLI zeroes those fields.');
   if (summary.context?.warning) {
     lines.push(`> ${summary.context.warning}`);
+    lines.push('');
+  }
+  if (summary.context && summary.context.valid === false) {
+    lines.push('> INVALID RUN: the arms did not report the same context window, so any ratio or token comparison is withdrawn.');
+    lines.push('');
+  }
+  if (summary.reliable === false) {
+    lines.push(`> n=${summary.repeats}: a single run cannot support a cost ratio; treat the numbers as a smoke test.`);
     lines.push('');
   }
   lines.push('Context tokens are `context_usage_ratio` times the session-reported window;');
@@ -823,6 +934,9 @@ export async function runAb(options = {}) {
   const turns = Math.min(Math.max(Number.parseInt(options.turns, 10) || DEFAULT_TURNS, 1), STEPS.length);
   const repeats = Math.max(Number.parseInt(options.repeats, 10) || DEFAULT_REPEATS, 1);
   const model = options.model || DEFAULT_MODEL;
+  const contextWindow = options.contextWindow === undefined
+    ? DEFAULT_CONTEXT_WINDOW
+    : Math.max(0, Number.parseInt(options.contextWindow, 10) || 0);
   const fixtureKind = options.fixtureKind === 'review' ? 'review' : 'library';
   const patchSize = PATCH_SIZES[options.patchSize] ? options.patchSize : 'small';
   const prompts = fixtureKind === 'review' ? reviewPrompts(turns) : longHorizonPrompts(turns);
@@ -830,7 +944,7 @@ export async function runAb(options = {}) {
   const log = options.log || ((line) => process.stdout.write(`${line}\n`));
 
   if (options.dryRun) {
-    return { dryRun: true, arms, turns, repeats, model, outDir, prompts };
+    return { dryRun: true, arms, turns, repeats, model, contextWindow, outDir, prompts };
   }
   validateOptions({ ...options, arms, model });
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
@@ -871,19 +985,24 @@ export async function runAb(options = {}) {
         treatmentHome: options.treatmentHome,
         workspace,
         model,
+        contextWindow,
         timeoutMs: Number.parseInt(options.timeoutMs, 10) || 300000,
         checkTimeoutMs: Number.parseInt(options.checkTimeoutMs, 10) || 120000,
         runSession,
         check: runCheck,
       });
-      const transcript = readTranscript(transcriptPath(
-        arm === 'treatment' ? options.treatmentConfig : options.baselineConfig,
-        workspace,
-        run.session_id,
-      ));
+      const configDir = arm === 'treatment' ? options.treatmentConfig : options.baselineConfig;
+      const transcript = readTranscript(transcriptPath(configDir, workspace, run.session_id));
+      const workerEntries = arm === 'treatment'
+        ? workerTranscriptPaths(configDir, workspace, run.session_id)
+          .flatMap((file) => readTranscript(file) || [])
+        : [];
       run.behavior = summarizeBehavior(transcript, { fixtureKind, turns });
       run.composition = summarizeComposition(transcript);
-      run.cost = summarizeCost(transcript);
+      run.cost = summarizeCost(transcript, { workerEntries });
+      if (arm === 'treatment') {
+        appendBehaviorLabels(options.treatmentHome, workspace, run.session_id, run.behavior);
+      }
       atomicWrite(
         path.join(outDir, 'runs', `${arm}-r${repeat + 1}`, 'result.json'),
         `${JSON.stringify(run, null, 2)}\n`,
@@ -901,7 +1020,7 @@ export async function runAb(options = {}) {
     }
   }
 
-  const summary = summarizeAb(runs, { model, turns, repeats, patchSize });
+  const summary = summarizeAb(runs, { model, turns, repeats, patchSize, contextWindow });
   atomicWrite(path.join(outDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   atomicWrite(path.join(outDir, 'summary.md'), renderSummaryMarkdown(summary));
   log(`[ab] results: ${outDir}`);

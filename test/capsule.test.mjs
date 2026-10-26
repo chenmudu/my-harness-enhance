@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
-import { buildCapsule, conductorInjection, workerContract } from '../src/core/capsule.mjs';
+import { buildCapsule, conductorInjection, sessionCard, workerContract } from '../src/core/capsule.mjs';
 import { buildPacket } from '../src/core/packet.mjs';
 import { estimateTokens } from '../src/core/metrics.mjs';
 import {
@@ -148,4 +148,29 @@ test('NEXT carries the next action and blockers when the task has them', () => {
   }], { replace: true });
   const capsule = buildCapsule(root);
   assert.match(capsule, /## NEXT\nship the endpoint — next: wire the router \(blocked: missing migration\)/);
+});
+
+test('the session card derives focus, blockers, change time and trust', () => {
+  const root = makeRoot();
+  assert.equal(sessionCard(root).trust, 'claimed');
+
+  writePlan(root, [
+    { id: 't1', title: 'Ship the endpoint', status: 'in_progress', next_action: 'run the tests' },
+    { id: 't2', title: 'Write the runbook', status: 'pending', blockers: ['t1'] },
+  ]);
+  writeLastCheck(root, {
+    ok: true,
+    checked: ['command:test'],
+    findings: [],
+    summary: { blockers: 0, warnings: 0, infos: 0 },
+  });
+
+  const card = sessionCard(root);
+  assert.match(card.now, /^t1 /);
+  assert.deepEqual(card.blockers, ['t2']);
+  assert.equal(card.trust, 'verified');
+  assert.ok(card.changed);
+
+  writeLastCheck(root, { ok: false, checked: [], findings: [], summary: { blockers: 1, warnings: 0, infos: 0 } });
+  assert.equal(sessionCard(root).trust, 'failed');
 });

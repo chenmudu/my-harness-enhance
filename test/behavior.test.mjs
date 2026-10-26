@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   expectedPaths,
   expectedPathsFor,
+  readTranscript,
   summarizeBehavior,
   summarizeComposition,
   summarizeCost,
   transcriptPath,
+  workerTranscriptPaths,
 } from '../src/bench/behavior.mjs';
 
 function human(text) {
@@ -182,4 +187,47 @@ test('cost sums the credits the CLI reports', () => {
   assert.equal(cost.requests, 2);
   assert.equal(cost.model, 'gfmodel');
   assert.equal(summarizeCost([]).credits, 0);
+});
+
+test('worker subagent transcripts are discovered beside the main session', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-worker-transcripts-'));
+  const configDir = path.join(home, 'config');
+  const workspace = path.join(home, 'workspace');
+  const key = workspace.replace(/[^A-Za-z0-9]/g, '-');
+  const dir = path.join(configDir, 'projects', key, 'session-1', 'subagents');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'agent-a.jsonl'),
+    '{"type":"assistant","message":{"model":"gfmodel","usage":{"credits":0.5}}}\n',
+    'utf8',
+  );
+  const files = workerTranscriptPaths(configDir, workspace, 'session-1');
+  assert.equal(files.length, 1);
+  const workerEntries = readTranscript(files[0]);
+  const cost = summarizeCost(
+    [{ type: 'assistant', message: { model: 'gfmodel', usage: { credits: 0.25 } } }],
+    { workerEntries },
+  );
+  // `credits` keeps its old conductor-only meaning; `total` is what was billed.
+  assert.equal(cost.credits, 0.25);
+  assert.equal(cost.worker.credits, 0.5);
+  assert.equal(cost.worker.requests, 1);
+  assert.equal(cost.total.credits, 0.75);
+  assert.equal(cost.total.requests, 2);
+  assert.equal(workerTranscriptPaths(configDir, workspace, 'missing').length, 0);
+});
+
+test('the provider token split is marked unavailable when the CLI zeroes it', () => {
+  const reported = summarizeCost([
+    { type: 'assistant', message: { usage: { credits: 1, input_tokens: 10, output_tokens: 5 } } },
+  ]);
+  assert.equal(reported.provider.available, true);
+  assert.equal(reported.provider.input, 10);
+  assert.equal(reported.provider.output, 5);
+
+  const zeroed = summarizeCost([
+    { type: 'assistant', message: { usage: { credits: 1, input_tokens: 0, output_tokens: 0 } } },
+  ]);
+  assert.equal(zeroed.provider.available, false);
+  assert.equal(summarizeCost([]).provider.available, false);
 });

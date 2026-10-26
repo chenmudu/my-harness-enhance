@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  appendBehaviorLabels,
   assertIsolatedDir,
+  cliSessionArgs,
   configHasHarness,
   contextWindowOf,
   createFixture,
@@ -21,6 +23,7 @@ import {
   summarizeTurns,
   turnEnv,
 } from '../src/bench/ab.mjs';
+import { projectKey } from '../src/core/state-root.mjs';
 
 delete process.env.MY_HARNESS_ENHANCE_PROJECT;
 delete process.env.MY_HARNESS_ENHANCE_SESSION;
@@ -433,4 +436,117 @@ test('the summary carries composition and billed credits per arm', () => {
   assert.match(markdown, /credits/);
   assert.match(markdown, /\| baseline \|.*\| 100 \| 500 \| 50 \|/);
   assert.match(markdown, /estimated tokens from the transcript/);
+});
+
+test('both arms are pinned to the same explicit context window', () => {
+  const args = cliSessionArgs({
+    configDir: 'C:/tmp/config',
+    model: 'GLM-5.3-Flash',
+    sessionId: 's1',
+    contextWindow: 200000,
+  });
+  const index = args.indexOf('--context-window');
+  assert.ok(index > 0, 'the window flag must be present');
+  assert.equal(args[index + 1], '200000');
+  assert.ok(!cliSessionArgs({ configDir: 'c', model: 'm', sessionId: 's' }).includes('--context-window'));
+});
+
+test('the summary splits conductor and worker credits and reports the spread', () => {
+  const run = (arm, repeat, conductor, worker) => ({
+    arm,
+    repeat,
+    session_id: `${arm}-${repeat}`,
+    summary: summarizeTurns([
+      { cli_ok: true, duration_ms: 60000, context_usage_ratio: 0.1, context_window: 200000, context_tokens: 20000 },
+    ]),
+    composition: null,
+    cost: {
+      credits: conductor,
+      requests: 2,
+      model: 'gfmodel',
+      conductor: { credits: conductor, requests: 2 },
+      worker: { credits: worker, requests: 1 },
+      total: { credits: conductor + worker, requests: 3 },
+      provider: { available: false },
+    },
+  });
+  const summary = summarizeAb(
+    [
+      run('baseline', 1, 1, 0),
+      run('treatment', 1, 2, 1),
+      run('treatment', 2, 3, 1),
+      run('treatment', 3, 2, 2),
+    ],
+    { turns: 1, repeats: 3, contextWindow: 200000 },
+  );
+  assert.equal(summary.arms.treatment.conductor_credits, 7);
+  assert.equal(summary.arms.treatment.worker_credits, 4);
+  assert.equal(summary.arms.treatment.credits, 11);
+  assert.equal(summary.arms.treatment.credits_median, 4);
+  assert.equal(summary.arms.treatment.credits_min, 3);
+  assert.equal(summary.arms.treatment.credits_max, 4);
+  assert.equal(summary.arms.treatment.cost_source, 'conductor+worker');
+  assert.equal(summary.arms.treatment.provider.available, false);
+  assert.equal(summary.reliable, true);
+  assert.equal(summary.context.valid, true);
+  const markdown = renderSummaryMarkdown(summary);
+  assert.match(markdown, /credits med \[min-max\]/);
+  assert.match(markdown, /Credits sum the conductor session and every `subagents\/agent-\*\.jsonl`/);
+});
+
+test('a stored run without worker usage is labelled conductor-only', () => {
+  const run = {
+    arm: 'treatment',
+    repeat: 1,
+    session_id: 'old',
+    summary: summarizeTurns([{ cli_ok: true, duration_ms: 1000, context_usage_ratio: 0.1 }]),
+    composition: null,
+    cost: { credits: 2, requests: 3, model: 'gfmodel' },
+  };
+  const summary = summarizeAb([run], { turns: 1, repeats: 1 });
+  assert.equal(summary.arms.treatment.cost_source, 'conductor-only');
+  assert.equal(summary.reliable, false);
+  assert.match(renderSummaryMarkdown(summary), /a single run cannot support a cost ratio/);
+});
+
+test('a mismatched window marks the run invalid, not merely warned', () => {
+  const run = (arm, window) => ({
+    arm,
+    repeat: 1,
+    session_id: arm,
+    summary: summarizeTurns([
+      { cli_ok: true, duration_ms: 1000, context_usage_ratio: 0.1, context_window: window },
+    ]),
+    composition: null,
+  });
+  const summary = summarizeAb([run('baseline', 1048576), run('treatment', 200000)], { turns: 1, repeats: 1 });
+  assert.equal(summary.context.comparable, false);
+  assert.equal(summary.context.valid, false);
+  assert.match(renderSummaryMarkdown(summary), /INVALID RUN/);
+});
+
+test('behavior labels are written to the metrics file deterministically', () => {
+  const home = tempDir('mhe-labels-');
+  const workspace = path.join(home, 'workspace');
+  const behavior = {
+    turns: [
+      { turn: 1, hit: true, wrongTask: 0, reRead: 0, failed: false, recovered: null },
+      { turn: 2, hit: false, wrongTask: 1, reRead: 2, failed: true, recovered: false },
+    ],
+  };
+  appendBehaviorLabels(home, workspace, 'session-1', behavior);
+  appendBehaviorLabels(home, workspace, 'session-1', behavior);
+  const file = path.join(home, 'projects', projectKey(workspace), 'metrics.jsonl');
+  const rows = fs.readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(rows.length, 4);
+  assert.equal(rows[0].event, 'behavior_label');
+  assert.equal(rows[0].session, 'session-1');
+  assert.equal(rows[0].next_action_hit, true);
+  assert.equal(rows[1].wrong_task, 1);
+  assert.equal(rows[1].re_read, 2);
+  assert.equal(rows[1].failed, true);
+  assert.deepEqual(
+    rows.slice(0, 2).map(({ at, ...rest }) => rest),
+    rows.slice(2).map(({ at, ...rest }) => rest),
+  );
 });

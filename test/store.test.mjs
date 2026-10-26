@@ -344,3 +344,34 @@ test('a last check records who produced it', () => {
   assert.equal(writeLastCheck(root, { ok: false, source: 'manual' }).source, 'manual');
   assert.equal(readLastCheck(root).source, 'manual');
 });
+
+test('a corrupt state file is quarantined instead of silently replaced', () => {
+  const root = tmpRoot();
+  initStore(root);
+  writePlan(root, [{ id: 't1', title: 'Ship the endpoint' }]);
+  const file = storePaths(root).plan;
+  fs.writeFileSync(file, '{ not json', 'utf8');
+
+  const plan = readPlan(root);
+  assert.deepEqual(plan.tasks, []);
+
+  const dir = path.dirname(file);
+  const quarantined = fs.readdirSync(dir).filter((name) => name.startsWith('plan.json.corrupt-'));
+  assert.equal(quarantined.length, 1);
+  assert.equal(fs.readFileSync(path.join(dir, quarantined[0]), 'utf8'), '{ not json');
+
+  // The bad bytes are gone from the live path, so a second read is a plain miss
+  // and must not produce a second quarantine file.
+  readPlan(root);
+  const again = fs.readdirSync(dir).filter((name) => name.startsWith('plan.json.corrupt-'));
+  assert.equal(again.length, 1);
+});
+
+test('a missing state file is a first run, not corruption', () => {
+  const root = tmpRoot();
+  initStore(root);
+  const plan = readPlan(root);
+  assert.deepEqual(plan.tasks, []);
+  const dir = path.dirname(storePaths(root).plan);
+  assert.equal(fs.readdirSync(dir).filter((name) => name.includes('.corrupt-')).length, 0);
+});
