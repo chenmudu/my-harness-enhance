@@ -25,4 +25,4 @@ jobs:
           git config --global user.email "mhe-ci@localhost"
           git config --global init.defaultBranch main
       - name: Run the suite
-        run: node --test
+        run: npm test

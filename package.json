@@ -12,7 +12,7 @@
     "mhe": "./bin/mhe.mjs"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node scripts/test-run.mjs",
     "bench": "node bin/mhe.mjs bench",
     "demo": "node bin/mhe.mjs demo",
     "doctor": "node bin/mhe.mjs doctor"
