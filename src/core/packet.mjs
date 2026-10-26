@@ -132,6 +132,19 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
     .slice(0, CAPS.blockers)
     .map((item) => `- ${item.id}: ${oneLine((item.by || []).join('; '), 140)}`);
 
+  // A worker can report `blocking` while its task is not formally blocked.
+  // Show the latest such note per task; an older job's note is superseded.
+  const seenTasks = new Set();
+  const decisions = [];
+  for (const job of [...jobs].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))) {
+    const key = String(job.task_id || job.id || '');
+    if (!key || seenTasks.has(key)) continue;
+    seenTasks.add(key);
+    const blocking = String(job.envelope?.blocking || '').trim();
+    if (blocking) decisions.push(`- ${key}: ${oneLine(blocking, 140)}`);
+    if (decisions.length >= 2) break;
+  }
+
   const must = [
     ...(goal.acceptance || []).slice(0, 3).map((item) => `- done when: ${oneLine(item, 140)}`),
     ...(goal.constraints || []).slice(0, CAPS.must).map((item) => `- ${oneLine(item, 140)}`),
@@ -165,7 +178,7 @@ export function buildPacket(root, { session = '', maxTokens = null } = {}) {
       : [],
     NOW: [nowLine],
     GOAL: goal.text ? [`- ${oneLine(goal.text, 300)}`] : [],
-    BLOCKERS: blockers,
+    BLOCKERS: [...decisions, ...blockers].slice(0, CAPS.blockers),
     DECIDE: decide,
     CHANGED: changed.slice(0, CAPS.changed).map((item) => `- ${item}`),
     MUST: must,

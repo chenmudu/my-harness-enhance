@@ -139,7 +139,8 @@ worker 返回 `needs_split`，并附上建议的子图，由 conductor
 2. 主 context = 目标/约束 + 任务图/路由表 + 结果摘要 + 决策。
    不含原始工具输出、worker 推理或逐字记录。
 3. worker 结果 = 有界的 envelope，包含 status、summary、evidence、artifacts、
-   open questions、next step、needs_split、data、cost、confidence。
+   open questions、next step、decision/impact/blocking/what_changed、
+   needs_split、data、cost、confidence。
 4. 进度 = status + 里程碑（milestone）；失败 = 结构化的错误；
    需要有限的下钻（drill-down）时用 `enhance_recall(handle)`。
 5. 粗粒度拆分在 conductor 里做；细粒度任务图由一个 planner worker

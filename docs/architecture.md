@@ -139,7 +139,8 @@ Rules:
 2. Main context = goal/constraints + task graph/routing table + result
    summaries + decisions. No raw tool output, worker reasoning, or transcript.
 3. Worker result = bounded envelope with status, summary, evidence, artifacts,
-   open questions, next step, needs_split, data, cost, confidence.
+   open questions, next step, decision/impact/blocking/what_changed,
+   needs_split, data, cost, confidence.
 4. Progress = status + milestones; failures = structured errors;
    `enhance_recall(handle)` for bounded drill-down.
 5. Coarse decomposition in the conductor; fine task graph proposed by a planner

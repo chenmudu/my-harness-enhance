@@ -206,6 +206,14 @@ export function validateEnvelope(value, limits = DEFAULT_CONFIG.envelope) {
 
   const next = clip(asString(value.next || ''), 500);
 
+  // Decision-ready fields. All optional, so an older worker keeps working; when
+  // present they are what the conductor needs to accept, reject, or unblock
+  // without reading the whole summary.
+  const decision = clip(asString(value.decision || ''), 240);
+  const impact = clip(asString(value.impact || ''), 240);
+  const blocking = clip(asString(value.blocking || ''), 240);
+  const whatChanged = clip(asString(value.what_changed || value.whatChanged || ''), 400);
+
   let needsSplit = null;
   if (status === 'needs_split') {
     const raw = value.needs_split;
@@ -283,6 +291,10 @@ export function validateEnvelope(value, limits = DEFAULT_CONFIG.envelope) {
     artifacts,
     open_questions: openQuestions,
     next,
+    decision,
+    impact,
+    blocking,
+    what_changed: whatChanged,
     needs_split: needsSplit,
     data,
     cost,
@@ -381,6 +393,10 @@ export function compactEnvelope(envelope, maxChars = DEFAULT_CONFIG.envelope.max
     artifacts: envelope.artifacts || [],
     open_questions: envelope.open_questions || [],
     next: envelope.next || '',
+    decision: envelope.decision || '',
+    impact: envelope.impact || '',
+    blocking: envelope.blocking || '',
+    what_changed: envelope.what_changed || '',
     needs_split: envelope.needs_split || null,
     data: envelope.data ?? null,
     cost: envelope.cost || null,

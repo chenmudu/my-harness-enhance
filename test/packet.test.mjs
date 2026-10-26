@@ -7,6 +7,7 @@ import { buildPacket, nowReminder } from '../src/core/packet.mjs';
 import {
   initStore,
   updatePlanTask,
+  upsertJob,
   writeBrief,
   writeGoal,
   writeLastCheck,
@@ -130,24 +131,48 @@ test('the packet reports what each section costs and what is about the decision'
 
 test('the frontier reminder fires once per change and stays silent otherwise', () => {
   const root = makeRoot();
-  assert.equal(nowReminder(root, { session: 'sess-1' }), null, 'no plan, no reminder');
+  assert.equal(nowReminder(root), null, 'no plan, no reminder');
 
   writePlan(root, [
     { id: 't1', title: 'wire it', status: 'in_progress', next_action: 'add the route' },
     { id: 't2', title: 'test it', status: 'pending' },
-  ], { replace: true, session: 'sess-1' });
-  const first = nowReminder(root, { session: 'sess-1' });
+  ], { replace: true });
+  const first = nowReminder(root);
   assert.match(first, /^\[NOW\] \[in_progress\] t1 wire it — next: add the route/);
-  assert.equal(nowReminder(root, { session: 'sess-1' }), null, 'same frontier, no repeat');
+  assert.equal(nowReminder(root), null, 'same frontier, no repeat');
 
-  updatePlanTask(root, 't1', { status: 'completed' }, 'sess-1');
-  const second = nowReminder(root, { session: 'sess-1' });
+  updatePlanTask(root, 't1', { status: 'completed' });
+  const second = nowReminder(root);
   assert.match(second, /^\[NOW\] \[pending\] t2 test it/);
 });
 
 test('a packet already showing the frontier suppresses the reminder', () => {
   const root = makeRoot();
-  writePlan(root, [{ id: 't1', title: 'wire it', status: 'pending' }], { replace: true, session: 'sess-1' });
-  buildPacket(root, { session: 'sess-1' });
-  assert.equal(nowReminder(root, { session: 'sess-1' }), null);
+  writePlan(root, [{ id: 't1', title: 'wire it', status: 'pending' }], { replace: true });
+  buildPacket(root);
+  assert.equal(nowReminder(root), null);
+});
+
+test('a worker blocking note reaches BLOCKERS and the newest note wins', () => {
+  const root = makeRoot();
+  writePlan(root, [{ id: 't1', title: 'wire it', status: 'in_progress' }], { replace: true });
+  upsertJob(root, 'job1', {
+    type: 'general-purpose',
+    status: 'ok',
+    task_id: 't1',
+    envelope: { blocking: 'need a yes/no on the column' },
+    updated_at: '2026-10-26T00:00:01.000Z',
+  });
+  assert.match(buildPacket(root).text, /## BLOCKERS\n- t1: need a yes\/no on the column/);
+
+  upsertJob(root, 'job2', {
+    type: 'general-purpose',
+    status: 'ok',
+    task_id: 't1',
+    envelope: { blocking: 'still waiting on the schema owner' },
+    updated_at: '2026-10-26T00:00:02.000Z',
+  });
+  const second = buildPacket(root).text;
+  assert.match(second, /- t1: still waiting on the schema owner/);
+  assert.doesNotMatch(second, /need a yes\/no/);
 });

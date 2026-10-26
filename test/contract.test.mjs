@@ -226,3 +226,30 @@ test('clip never leaves a lone surrogate', () => {
   const units = [...result.value.summary].map((char) => char.codePointAt(0));
   assert.equal(units.filter((code) => code >= 0xd800 && code <= 0xdfff).length, 0);
 });
+
+test('decision-ready fields are optional, clipped, and survive compaction', () => {
+  const without = validateEnvelope(valid);
+  assert.equal(without.value.decision, '');
+  assert.equal(without.value.blocking, '');
+
+  const withFields = validateEnvelope({
+    ...valid,
+    decision: 'Accept the migration as-is',
+    impact: 'Unblocks the schema task',
+    blocking: 'Needs a yes/no on dropping the legacy column',
+    what_changed: ['src/a.js', 'test/a.test.mjs'],
+  });
+  assert.equal(withFields.ok, true);
+  assert.equal(withFields.value.decision, 'Accept the migration as-is');
+  assert.equal(withFields.value.impact, 'Unblocks the schema task');
+  assert.match(withFields.value.blocking, /^Needs a yes\/no/);
+  assert.equal(withFields.value.what_changed, '["src/a.js","test/a.test.mjs"]');
+
+  const compact = JSON.parse(compactEnvelope(withFields.value));
+  assert.equal(compact.decision, 'Accept the migration as-is');
+  assert.equal(compact.blocking, 'Needs a yes/no on dropping the legacy column');
+  assert.equal(compact.what_changed, '["src/a.js","test/a.test.mjs"]');
+
+  const long = validateEnvelope({ ...valid, decision: 'd'.repeat(500) });
+  assert.ok(long.value.decision.length <= 240);
+});
