@@ -212,7 +212,9 @@ different windows, `summary.json` sets `context.comparable` to `false` and
   so a keyword search cannot shortcut it. `--patch-size small|medium|large`
   scales a patch to about 500, 2,000, and 8,000 lines.
 
-### Task-shape crossover (3 turns, one repeat, GLM-5.3-Flash)
+### Task-shape crossover (one repeat, GLM-5.3-Flash)
+
+Three turns, three patch sizes:
 
 | patch lines | baseline credits | treatment credits | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -220,19 +222,27 @@ different windows, `summary.json` sets `context.comparable` to `false` and
 | 1,931 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
 | 7,691 | 4.03 | 3.28 | 0.81x | 2.9 / 7.6 | 15,634 | 3,484 |
 
-The last row is not the same regime as the first two: the host refuses a whole
-Read above 25k tokens, so at 7,691 lines both arms sample the patch with
-`limit` reads and Grep. The baseline still answered 3/3, but by searching
-rather than reading, and it re-read the same samples in later turns (16
-re-reads against 0). What the layer isolates is paid once inside a worker; what
-the baseline samples stays in the conductor and is re-sent every turn.
+Fifteen turns at 1,931 lines, same configuration, only the horizon changed:
 
-So the crossover is not a patch size. It is whether the input is read more than
-once: below the host's read cap the baseline reads once, cheaply, and the layer
-costs 1.4-1.7x plus 4.5-6.4x the wall time; above the cap both sides sample, and
-the layer wins on credits only because the sampling lands in a worker context.
-A long horizon moves this earlier, because the baseline re-sends everything it
-has accumulated on every turn; these probes are three turns and do not show it.
+| turns | baseline credits | treatment credits | ratio | wall (min) | baseline tool tokens | treatment tool + worker |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 3.37 | 4.84 | 1.44x | 1.0 / 6.4 | 31,401 | 3,198 |
+| 15 | 23.66 | 19.59 | 0.83x | 6.7 / 21.8 | 98,535 | 13,280 |
+
+The mechanism is in the content columns. `Read` is a normal tool, so whatever
+the baseline reads stays in the conductor and is re-sent on every later
+request; the layer reads inside workers and only the result comes back. Over
+fifteen turns that is 98.5k tokens of accumulated patch against 13.3k.
+
+Credits track requests and context together, not either one: at fifteen turns
+the treatment makes 2.4x the requests (78 conductor + 47 worker against 52) and
+is still 17% cheaper, because its per-request context stays smaller. Wall time
+moves the other way, 3.3x.
+
+Two caveats. At 7,691 lines the host refuses a whole `Read` above 25k tokens, so
+both arms sample with `limit` reads and Grep; that row measures where sampling
+happens, not who read more. And re-reads are not a stable signal: 14 at 491
+lines, 2 at 1,931 lines / 3 turns, 0 at 1,931 lines / 15 turns.
 
 ## Acceptance metrics
 
