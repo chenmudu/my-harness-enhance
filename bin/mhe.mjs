@@ -70,7 +70,7 @@ Usage:
   mhe ab --baseline-config <dir> --treatment-config <dir> --treatment-home <dir>
          [--arm both|baseline|treatment] [--turns 15] [--repeats 2]
          [--model GLM-5.3-Flash] [--out <dir>] [--fixture-kind library|review]
-         [--timeout-ms <ms>] [--dry-run]
+         [--patch-size small|medium|large] [--timeout-ms <ms>] [--dry-run]
   mhe demo
   mhe version | help
 
@@ -524,6 +524,7 @@ async function cmdAb(args) {
     cli: args.cli || null,
     fixture: args.fixture ? path.resolve(args.fixture) : '',
     fixtureKind: args['fixture-kind'] || '',
+    patchSize: args['patch-size'] || '',
     timeoutMs: args['timeout-ms'],
     checkTimeoutMs: args['check-timeout-ms'],
     dryRun: Boolean(args['dry-run']),

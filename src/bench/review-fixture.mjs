@@ -132,14 +132,17 @@ export function reviewPlan(count = 15, seed = 7) {
 
 export const MODULE_SLOTS = 30;
 
+/** Patch sizes the crossover probe uses: ~500, ~2,000 and ~8,000 lines. */
+export const PATCH_SIZES = { small: 30, medium: 120, large: 480 };
+
 /**
- * A module is eight functions: one carries the planted defect, the rest are
+ * A module is `slots` functions: one carries the planted defect, the rest are
  * sound. A review needs something worth reading; a 20-line module makes the
  * baseline's per-turn input trivial and the comparison meaningless.
  */
-export function renderModule(entry) {
+export function renderModule(entry, slots = MODULE_SLOTS) {
   const parts = [];
-  for (let slot = 0; slot < MODULE_SLOTS; slot += 1) {
+  for (let slot = 0; slot < slots; slot += 1) {
     const template = TEMPLATES[(entry.index + slot) % TEMPLATES.length];
     const defect = slot === 0 ? entry.template.defect : null;
     const seed = entry.seed + slot * 7;
@@ -150,9 +153,9 @@ export function renderModule(entry) {
   return `${HEADER}\n${parts.join('\n')}`;
 }
 
-export function renderPatch(entry) {
+export function renderPatch(entry, slots = MODULE_SLOTS) {
   const file = `src/mod${String(entry.index).padStart(2, '0')}.mjs`;
-  const lines = renderModule(entry).split('\n');
+  const lines = renderModule(entry, slots).split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
   const body = lines.map((line) => `+${line}`).join('\n');
   return [
@@ -195,7 +198,7 @@ rules, the defect is the one that changes a result a caller depends on.
  * Write the review fixture into `dir` and return the planted answers so the
  * runner can check them without exposing the ground truth in the workspace.
  */
-export function buildReviewFixture(dir, { count = 15, seed = 7 } = {}) {
+export function buildReviewFixture(dir, { count = 15, seed = 7, slots = MODULE_SLOTS } = {}) {
   fs.mkdirSync(path.join(dir, 'patches'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'answers'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'README.md'), REVIEW_README, 'utf8');
@@ -209,7 +212,7 @@ export function buildReviewFixture(dir, { count = 15, seed = 7 } = {}) {
   const planted = [];
   for (const entry of reviewPlan(count, seed)) {
     const name = String(entry.index).padStart(2, '0');
-    fs.writeFileSync(path.join(dir, 'patches', `${name}.patch`), renderPatch(entry), 'utf8');
+    fs.writeFileSync(path.join(dir, 'patches', `${name}.patch`), renderPatch(entry, slots), 'utf8');
     planted.push({ index: entry.index, rule: entry.template.defect });
   }
   return planted;

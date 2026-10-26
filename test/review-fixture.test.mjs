@@ -8,6 +8,8 @@ import {
   buildReviewFixture,
   checkReviewAnswers,
   renderModule,
+  MODULE_SLOTS,
+  PATCH_SIZES,
   renderPatch,
   reviewPlan,
   reviewPrompts,
@@ -81,4 +83,12 @@ test('the check reads the first token of each answer file', () => {
   result = checkReviewAnswers(dir, planted);
   assert.equal(result.ok, true);
   assert.equal(result.passed, 2);
+});
+test('the three patch sizes are about 500, 2,000 and 8,000 lines', () => {
+  const [entry] = reviewPlan(1, 7);
+  for (const [name, target] of [['small', 500], ['medium', 2000], ['large', 8000]]) {
+    const lines = renderPatch(entry, PATCH_SIZES[name]).split('\n').length;
+    assert.ok(Math.abs(lines - target) < target * 0.1, `${name}: ${lines} lines`);
+  }
+  assert.equal(PATCH_SIZES.small, MODULE_SLOTS);
 });

@@ -7,7 +7,7 @@ import { atomicWrite, readJson } from '../core/fs-util.mjs';
 import { canonicalPath, projectKey } from '../core/state-root.mjs';
 import { sessionKey } from '../core/store.mjs';
 import { summarizeMetrics } from '../core/metrics.mjs';
-import { buildReviewFixture, checkReviewAnswers, reviewPrompts } from './review-fixture.mjs';
+import { buildReviewFixture, checkReviewAnswers, PATCH_SIZES, reviewPrompts } from './review-fixture.mjs';
 import { readTranscript, summarizeBehavior, summarizeComposition, summarizeCost, transcriptPath } from './behavior.mjs';
 
 export const DEFAULT_MODEL = 'GLM-5.3-Flash';
@@ -725,6 +725,7 @@ export function summarizeAb(runs, meta = {}) {
     model: meta.model || DEFAULT_MODEL,
     turns: meta.turns || DEFAULT_TURNS,
     repeats: meta.repeats || DEFAULT_REPEATS,
+    patch_size: meta.patchSize || null,
     context: contextComparability(arms),
     arms,
     runs: runs.map((run) => ({
@@ -743,6 +744,7 @@ export function renderSummaryMarkdown(summary) {
   lines.push(`- model: ${summary.model}`);
   lines.push(`- turns per run: ${summary.turns}`);
   lines.push(`- repeats: ${summary.repeats}`);
+  if (summary.patch_size) lines.push(`- patch size: ${summary.patch_size}`);
   lines.push('');
   lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | credits | assistant | tool results | worker results | minutes | denials |');
   lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
@@ -822,6 +824,7 @@ export async function runAb(options = {}) {
   const repeats = Math.max(Number.parseInt(options.repeats, 10) || DEFAULT_REPEATS, 1);
   const model = options.model || DEFAULT_MODEL;
   const fixtureKind = options.fixtureKind === 'review' ? 'review' : 'library';
+  const patchSize = PATCH_SIZES[options.patchSize] ? options.patchSize : 'small';
   const prompts = fixtureKind === 'review' ? reviewPrompts(turns) : longHorizonPrompts(turns);
   const outDir = path.resolve(options.outDir || defaultOutDir());
   const log = options.log || ((line) => process.stdout.write(`${line}\n`));
@@ -847,7 +850,7 @@ export async function runAb(options = {}) {
       if (fixtureKind === 'review') {
         fs.rmSync(workspace, { recursive: true, force: true });
         fs.mkdirSync(workspace, { recursive: true });
-        planted = buildReviewFixture(workspace, { count: turns });
+        planted = buildReviewFixture(workspace, { count: turns, slots: PATCH_SIZES[patchSize] });
       } else {
         prepareWorkspace(options.fixture, workspace);
       }
@@ -898,7 +901,7 @@ export async function runAb(options = {}) {
     }
   }
 
-  const summary = summarizeAb(runs, { model, turns, repeats });
+  const summary = summarizeAb(runs, { model, turns, repeats, patchSize });
   atomicWrite(path.join(outDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
   atomicWrite(path.join(outDir, 'summary.md'), renderSummaryMarkdown(summary));
   log(`[ab] results: ${outDir}`);
