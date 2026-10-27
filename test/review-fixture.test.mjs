@@ -74,7 +74,8 @@ test('the check reads the first token of each answer file', () => {
   assert.equal(result.failed, 2);
 
   fs.writeFileSync(path.join(dir, 'answers', '01.txt'), `${planted[0].rule}\nextra notes\n`);
-  fs.writeFileSync(path.join(dir, 'answers', '02.txt'), 'OFF-BY-ONE\n');
+  const wrong = planted[1].rule === 'off-by-one' ? 'wrong-comparison' : 'off-by-one';
+  fs.writeFileSync(path.join(dir, 'answers', '02.txt'), `${wrong.toUpperCase()}\n`);
   result = checkReviewAnswers(dir, planted);
   assert.equal(result.passed, 1);
   assert.equal(result.findings[0].index, planted[1].index);
@@ -84,9 +85,53 @@ test('the check reads the first token of each answer file', () => {
   assert.equal(result.ok, true);
   assert.equal(result.passed, 2);
 });
+test('the defect slot is seeded, in range, and not always first', () => {
+  const slots = new Set();
+  for (let seed = 1; seed <= 40; seed += 1) {
+    for (const entry of reviewPlan(15, seed, 60)) {
+      assert.ok(Number.isInteger(entry.defectSlot), `seed ${seed}`);
+      assert.ok(entry.defectSlot >= 0 && entry.defectSlot < 60, `seed ${seed}: ${entry.defectSlot}`);
+      slots.add(entry.defectSlot);
+    }
+  }
+  assert.ok(slots.size > 20, `only ${slots.size} distinct slots`);
+  assert.ok(slots.has(0));
+  assert.ok([...slots].some((slot) => slot >= 45), 'no defect in the last quarter');
+});
+
+test('every replica is suffixed, so position and name do not identify the defect', () => {
+  for (let seed = 1; seed <= 10; seed += 1) {
+    const [entry] = reviewPlan(1, seed, 60);
+    const { name } = entry.template.make(entry.seed, null);
+    const module = renderModule(entry, 60);
+    for (const family of ['sum', 'aboveThreshold', 'largest', 'firstPlus', 'double', 'share']) {
+      assert.doesNotMatch(module, new RegExp(`export function ${family}\\(`), `${family} without suffix, seed ${seed}`);
+    }
+    assert.match(module, new RegExp(`export function ${name}${entry.defectSlot}\\(`));
+  }
+});
+
+test('rule order is seeded and reproducible', () => {
+  const rules = (seed) => reviewPlan(15, seed, 60).map((entry) => entry.template.defect);
+  assert.deepEqual(rules(11), rules(11));
+  assert.notDeepEqual(rules(11), rules(12));
+  assert.equal(new Set(rules(11)).size, REVIEW_RULES.length);
+});
+
+test('the fixture reports the defect slot it actually rendered', () => {
+  const dir = tempDir('mhe-review-slot-');
+  const planted = buildReviewFixture(dir, { count: 1, seed: 21, slots: 60 });
+  const [entry] = reviewPlan(1, 21, 60);
+  const { name } = entry.template.make(entry.seed, null);
+  assert.equal(planted[0].defect_slot, entry.defectSlot);
+  const patch = fs.readFileSync(path.join(dir, 'patches', '01.patch'), 'utf8');
+  assert.match(patch, new RegExp(`\\+export function ${name}${entry.defectSlot}\\(`));
+  assert.doesNotMatch(patch, new RegExp(`\\+export function ${name}\\(`));
+});
+
 test('the three patch sizes are about 500, 2,000 and 8,000 lines', () => {
-  const [entry] = reviewPlan(1, 7);
   for (const [name, target] of [['small', 500], ['medium', 2000], ['large', 8000]]) {
+    const [entry] = reviewPlan(1, 7, PATCH_SIZES[name]);
     const lines = renderPatch(entry, PATCH_SIZES[name]).split('\n').length;
     assert.ok(Math.abs(lines - target) < target * 0.1, `${name}: ${lines} lines`);
   }

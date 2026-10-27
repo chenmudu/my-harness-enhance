@@ -964,7 +964,11 @@ export async function runAb(options = {}) {
       if (fixtureKind === 'review') {
         fs.rmSync(workspace, { recursive: true, force: true });
         fs.mkdirSync(workspace, { recursive: true });
-        planted = buildReviewFixture(workspace, { count: turns, slots: PATCH_SIZES[patchSize] });
+        planted = buildReviewFixture(workspace, {
+          count: turns,
+          slots: PATCH_SIZES[patchSize],
+          seed: 7 + repeat,
+        });
       } else {
         prepareWorkspace(options.fixture, workspace);
       }
@@ -991,6 +995,17 @@ export async function runAb(options = {}) {
         runSession,
         check: runCheck,
       });
+      if (fixtureKind === 'review') {
+        // The per-turn check grades only the answers produced so far; the final
+        // check must grade every planted patch, or an early stop looks clean.
+        run.summary.final_check = checkReviewAnswers(workspace, planted);
+        run.summary.answered_turns = answered;
+        run.summary.expected_turns = turns;
+        run.summary.complete = answered === turns && !run.stopped;
+        if (!run.summary.complete) {
+          run.summary.incomplete_reason = run.stopped || `answered ${answered} of ${turns}`;
+        }
+      }
       const configDir = arm === 'treatment' ? options.treatmentConfig : options.baselineConfig;
       const transcript = readTranscript(transcriptPath(configDir, workspace, run.session_id));
       const workerEntries = arm === 'treatment'
