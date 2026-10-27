@@ -78,6 +78,7 @@ everything in one long session.
 - [docs/README.md](docs/README.md) — documentation map and authority order.
 - [INSTALL.md](INSTALL.md) — Qoder and ZCode installation and rollback runbook.
 - [docs/architecture.md](docs/architecture.md) — architecture and invariants.
+- [docs/state.md](docs/state.md) — state files, hook injection, and the task lifecycle.
 - [docs/adapters.md](docs/adapters.md) — adapter contract and feature matrix.
 - [docs/worktrees.md](docs/worktrees.md) — isolated git worktrees for code tasks.
 - [docs/brief-checks.md](docs/brief-checks.md) — shared brief and deterministic checks.
