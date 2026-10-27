@@ -404,11 +404,37 @@ export function conductorTurnInjection(root, {
   const contractPolicy = contractMode === 'injected'
     ? '- Worker contracts are injected at SubagentStart; do not call enhance_worker_contract.'
     : '- This adapter does not inject worker contracts; call enhance_worker_contract and paste it into every Agent/Task prompt.';
+  const plan = readPlan(root, session);
+  const schedule = scheduleNext(plan);
+  const top = schedule.candidates[0] || null;
+  const next = top
+    ? `[${top.status}] ${top.id} ${clip(top.title || top.task || '', 120)}`
+      + `${top.next_action ? ` — next: ${clip(top.next_action, 140)}` : ''}`
+    : schedule.gate === 'drain'
+      ? `drain first: ${clip(schedule.reason, 140)}`
+      : 'no ready task';
+  const brief = readBrief(root, session);
+  const checks = Array.isArray(brief?.checks) && brief.checks.length
+    ? brief.checks.join(', ')
+    : 'none';
+  const guards = [
+    `next: ${next}`,
+    `checks: ${checks}`,
+    (plan.tasks || []).length
+      ? 'Do not call enhance_plan to record status; call it once only to add the next task when the next line says no ready task.'
+      : 'No plan yet: create the brief and plan once, then dispatch.',
+    brief?.profile
+      ? 'The brief is current; do not call enhance_brief again this turn.'
+      : 'Create the brief once, then dispatch.',
+    'The packet is the state; do not call enhance_state this turn.',
+    'Your final message is the decision; call enhance_decide only when it must survive the session.',
+  ];
   const anchor = [
     '[MY-HARNESS-ENHANCE TURN ANCHOR]',
     `project: ${root}`,
     session ? `session: ${session}` : '',
     'The conductor policy injected at session start still applies.',
+    ...guards,
     contractPolicy,
     changed.length
       ? `State changed since your last turn (${changed.map((item) => item.title).join(', ')}).`

@@ -70,6 +70,8 @@ test('MCP server initializes and lists enhance tools', () => {
   const planTool = list.result.tools.find((tool) => tool.name === 'enhance_plan');
   assert.deepEqual(planTool.inputSchema.properties.tasks.items.required, ['id']);
   assert.ok(planTool.inputSchema.properties.tasks.items.properties.task);
+  const decideTool = list.result.tools.find((tool) => tool.name === 'enhance_decide');
+  assert.ok(decideTool.inputSchema.properties.session);
 });
 
 test('MCP enhance_goal writes state and enhance_state returns it', () => {
@@ -336,6 +338,49 @@ test('MCP enhance_recall returns bounded search results', () => {
   ]);
   const recall = responses.find((item) => item.id === 2);
   assert.match(recall.result.content[0].text, /JWT/);
+});
+
+test('MCP enhance_recall reads a bounded project-relative file and blocks traversal', () => {
+  const root = makeRoot();
+  fs.mkdirSync(path.join(root, 'answers'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'answers', '01.txt'), 'off-by-one\n');
+  fs.writeFileSync(path.join(path.dirname(root), 'outside.txt'), 'secret\n');
+  const responses = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'enhance_recall', arguments: { handle: 'answers/01.txt', max_tokens: 200 } },
+    },
+    {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'enhance_recall', arguments: { handle: '../outside.txt' } },
+    },
+  ]);
+  const file = responses.find((item) => item.id === 2);
+  assert.equal(file.result.isError, false);
+  assert.match(file.result.content[0].text, /off-by-one/);
+  const outside = responses.find((item) => item.id === 3);
+  assert.equal(outside.result.isError, true);
+});
+
+test('MCP enhance_decide accepts a session', () => {
+  const root = makeRoot();
+  const responses = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'enhance_decide', arguments: { decision: 'ship it', session: 's1' } },
+    },
+  ]);
+  const decide = responses.find((item) => item.id === 2);
+  assert.equal(decide.result.isError, false);
+  assert.match(decide.result.content[0].text, /ship it/);
 });
 
 test('MCP enhance_artifact rejects an invalid handle', () => {

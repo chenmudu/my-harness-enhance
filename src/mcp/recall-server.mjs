@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
+import fs from 'node:fs';
+import path from 'node:path';
 import { loadConfig } from '../core/config.mjs';
 import { resolveProject } from '../core/state-root.mjs';
 import { buildCapsule, workerContract } from '../core/capsule.mjs';
@@ -202,6 +204,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         project: PROJECT_PROP,
+        session: SESSION_PROP,
         decision: { type: 'string' },
         rationale: { type: 'string' },
       },
@@ -281,7 +284,7 @@ const TOOLS = [
   },
   {
     name: 'enhance_recall',
-    description: 'Bounded retrieval: search artifacts by query or read a specific artifact handle. Never returns a full transcript.',
+    description: 'Bounded retrieval: search artifacts by query, read an artifact handle, or read a project-relative file. Never returns a full transcript.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -638,12 +641,33 @@ function toolEnhanceWorktree(args = {}) {
   return jsonResult(removeWorktree(root, taskId, { discard: Boolean(args.discard), session }));
 }
 
+function readProjectText(root, rel, maxChars) {
+  const base = path.resolve(root);
+  const requested = String(rel || '').replace(/\\/g, '/');
+  const file = path.resolve(base, requested);
+  if (file === base || !file.startsWith(`${base}${path.sep}`)) return null;
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+  return {
+    path: requested,
+    content: text.slice(0, maxChars),
+    total_chars: text.length,
+    truncated: text.length > maxChars,
+  };
+}
+
 function toolEnhanceRecall(args = {}) {
   const { root, config } = contextFor(args, { tolerateAmbiguity: true });
   if (args.handle) {
-    if (!isHandle(args.handle)) return textResult(`invalid artifact handle: ${args.handle}`, true);
     const maxChars = Math.max(200, Math.min(8000, Number(args.max_tokens || config.context.maxRecallTokens) * 4));
-    return jsonResult(getArtifact(root, args.handle, { maxChars }));
+    if (isHandle(args.handle)) return jsonResult(getArtifact(root, args.handle, { maxChars }));
+    const file = readProjectText(root, args.handle, maxChars);
+    if (file) return jsonResult(file);
+    return textResult(`invalid artifact handle: ${args.handle}`, true);
   }
   const query = String(args.query || '').trim();
   const results = searchArtifacts(root, query, {
