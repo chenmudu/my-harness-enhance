@@ -8,9 +8,25 @@
 
 默认状态主目录是 `~/.my-harness-enhance`；`MY_HARNESS_ENHANCE_HOME` 可以覆盖（A/B runner 用的是 `~/.mhe-test/state-treatment`）。不会往项目仓库里写任何东西。
 
-`projects.json` 把规范化后的项目根目录映射到 16 位 SHA-256 项目 key。共享状态在 `projects/<key>/`；每个会话的工作状态在 `projects/<key>/sessions/<sessionKey>/`。
+`projects.json` 位于状态主目录根部，把规范化后的项目根目录映射到 16 位 SHA-256 项目 key。共享状态在 `projects/<key>/`；每个会话的工作状态在 `projects/<key>/sessions/<sessionKey>/`。
 
-`sessionKey` 会把宿主 session id 转小写、删除 `[a-z0-9-]` 之外的字符、截断到 64 个字符；空 id 回退到 `projects/<key>/` 下的旧版项目级文件。
+`sessionKey` 会把宿主 session id 转小写、删除 `[a-z0-9-]` 之外的字符、截断到 64 个字符（空 id 归一为 `default`）。只有完全不传 session 时，`storePaths` 才使用 `projects/<key>/` 下的旧版项目级文件。
+
+目录结构：
+
+```text
+~/.my-harness-enhance/
+├── projects.json
+└── projects/<key>/
+    ├── config.json  capabilities.json
+    ├── decisions.jsonl  sessions.json  metrics.jsonl
+    ├── artifacts/  logs/  .lock
+    └── sessions/<sessionKey>/
+        ├── goal.json  brief.json  plan.json  jobs.json
+        ├── journal.md  last-check.json  session.json
+        ├── worktrees.json  capsule.md
+        └── injection.json  packet.json  now.json
+```
 
 ### 1.1 项目级文件
 
@@ -42,7 +58,12 @@
 | `packet.json` | delta 簿记 | 上一轮 plan 状态与 check 标签 | `buildPacket` |
 | `now.json` | 提醒去重 | 上一条 `[NOW]` 行 | `nowReminder` |
 
-最后三个文件是簿记，不是内容。`capsule.md` 是完整账本；conductor 通常只看到由它构建出的 packet 投影。
+写者：hooks 负责 `goal`、`journal`、`jobs`、`capsule`、`injection`、`packet`、`now`；conductor 的 MCP 工具写 `brief.json`、`plan.json`、`last-check.json`、`worktrees.json`、`decisions.jsonl`；adapter 写 `session.json`。
+worker 从不写状态文件：它只返回一个 JSON envelope，由 `SubagentStop` 落盘。
+`last-check.json` 只有一个权威来源：harness 的检查或成功的 `land`，绝不是 worker 的自报。
+
+最后三个文件是簿记，不是内容。`capsule.md` 是在 `SessionStart`、`UserPromptSubmit`、`PreCompact`、`Stop` 时重建的派生完整账本，用于恢复和查看；它不会每轮注入。
+每轮注入的是 packet，直接由 `goal.json`、`brief.json`、`plan.json`、`jobs.json` 和 `last-check.json` 构建。
 
 ## 2. 数据结构
 
@@ -138,14 +159,17 @@ brief 是 conductor、worker 和 checker 共享的持久契约。`goal_version` 
 
 | 事件 | 对象 | 载荷 | 预算 | 来源 |
 |---|---|---|---|---|
-| `SessionStart` | conductor | conductor policy 加完整 packet | packet 最多 1,800 token | `conductorInjection` |
-| `UserPromptSubmit` | conductor | 回合 anchor 加**只有变化的** packet section | packet 最多 1,800 token；实测约 216 token/轮 | `conductorTurnInjection` |
-| `SubagentStart` | worker | worker contract、goal、acceptance、constraints、brief | fit 到 900 token | `workerInjection` |
+| `SessionStart` | conductor | conductor policy 加完整 packet | packet 最多 1,800 token，policy 另计 | `conductorInjection` |
+| `UserPromptSubmit` | conductor | 回合 anchor 加**只有变化的** packet section | 源 packet 最多 1,800 token；实际注入约 216 token/轮 | `conductorTurnInjection` |
+| `SubagentStart` | worker | worker contract、goal、acceptance、constraints、brief | 总共 900 token；brief 先裁到 1,000 字符 | `workerInjection` |
 | `PreToolUse` | conductor 与 worker | 不注入上下文；只允许或拒绝工具调用 | 无 | `hook-policy.mjs` |
 | `SubagentStop` | 无 | 解析 envelope、存 artifact、更新 job 和 plan | 无 | `onSubagentStop` |
 | `PostToolUse` | conductor | 压缩后的 worker envelope 加一条 `[NOW]` frontier 提醒 | envelope 上限加一行 | `compactEnvelope` / `nowReminder` |
-| `PreCompact` | 无 | 写 capsule 和 compaction 指标；下一次 `SessionStart` 重新注入 | 无 | `onPreCompact` |
+| `PreCompact` | 无 | 重建 capsule 并写 compaction 指标；下一次 `SessionStart` 重新注入 policy 和 packet | 无 | `onPreCompact` |
 | `Stop` | conductor | 代码 worktree 未 land 时拒绝停止；否则写指标 | 无 | `onStop` |
+
+`SessionStart` 时 hook 会为每个 packet section 记录哈希到 `injection.json`。之后每轮重建 packet、比较哈希，只注入变化的 section 加 anchor；被移除的 section 会按标题列出。
+`packet.json` 记住上一轮的 plan 状态和 check 标签，packet 的 `CHANGED` 就是这样渲染出来的。
 
 worker 永远不会收到 `plan.json`、`jobs.json`、`journal.md` 或其他任务的状态。任务细节（精确路径、方法、输出格式）来自 conductor 的 `Agent`/`Task` prompt，那个通道不受 `SubagentStart` hook 截断。
 
@@ -175,7 +199,7 @@ sequenceDiagram
 ```
 
 1. `UserPromptSubmit` 在首个 prompt 设置 goal，在新的实质性 prompt 上替换 goal，否则追加到 journal；然后构建 packet 并注入 anchor 加变化 section。
-2. conductor 读 anchor，在 brief 和 plan 缺失时创建它们，并选择一个交付单元。
+2. conductor 读 anchor，在 brief 和 plan 缺失时创建它们，并选择一个交付单元：一个 plan task，一个 owner、一套 brief/check、一个 land 边界。
 3. conductor 写派工 prompt，包含精确的 `task_id`、输入路径、方法、输出路径和禁止动作。
 4. `SubagentStart` 创建 job，并注入 worker contract、goal 和 brief。worker 看不到 plan。
 5. worker 读输入、产出 artifact，并返回一个 JSON envelope。
@@ -183,7 +207,7 @@ sequenceDiagram
 7. conductor 跑确定性检查（`enhance_check`）或对代码执行 `land`。只有那个结果能完成任务。
 8. conductor 在决策需要跨会话保留时记录 decision；下一个 prompt 从第 1 步开始，只带 delta anchor。
 
-当前 conductor policy 让第 2 步默认走委派。建议的决策是：直接做、委派一个交付单元，还是把多个单元合并给一个 worker；见下面的限制。
+当前 policy 禁止做仓库工作，所以第 2 步一定是委派；把小项合并成一个 task 是允许的，但直接做不允许。待定的决策是要不要加入“直接做还是委派”的规则；见下面的 D-1。
 
 ## 5. 当前限制
 

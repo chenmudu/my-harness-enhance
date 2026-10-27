@@ -8,9 +8,25 @@ This page describes what the harness stores on disk, which data structure backs 
 
 The default state home is `~/.my-harness-enhance`; `MY_HARNESS_ENHANCE_HOME` overrides it (the A/B runner uses `~/.mhe-test/state-treatment`). Nothing is written into the project repository.
 
-`projects.json` maps a canonical project root to a 16-character SHA-256 project key. Shared state lives in `projects/<key>/`; per-session working state lives in `projects/<key>/sessions/<sessionKey>/`.
+`projects.json` sits at the state-home root and maps a canonical project root to a 16-character SHA-256 project key. Shared state lives in `projects/<key>/`; per-session working state lives in `projects/<key>/sessions/<sessionKey>/`.
 
-`sessionKey` lowercases the host session id, removes everything outside `[a-z0-9-]`, and truncates to 64 characters; an empty id falls back to the legacy project-level files in `projects/<key>/`.
+`sessionKey` lowercases the host session id, removes everything outside `[a-z0-9-]`, and truncates to 64 characters (`default` when the id is empty). `storePaths` uses the legacy project-level files only when no session is passed at all.
+
+The layout:
+
+```text
+~/.my-harness-enhance/
+├── projects.json
+└── projects/<key>/
+    ├── config.json  capabilities.json
+    ├── decisions.jsonl  sessions.json  metrics.jsonl
+    ├── artifacts/  logs/  .lock
+    └── sessions/<sessionKey>/
+        ├── goal.json  brief.json  plan.json  jobs.json
+        ├── journal.md  last-check.json  session.json
+        ├── worktrees.json  capsule.md
+        └── injection.json  packet.json  now.json
+```
 
 ### 1.1 Project-level files
 
@@ -42,7 +58,12 @@ The default state home is `~/.my-harness-enhance`; `MY_HARNESS_ENHANCE_HOME` ove
 | `packet.json` | Delta bookkeeping | Previous plan statuses and check label | `buildPacket` |
 | `now.json` | Reminder deduplication | Last `[NOW]` line | `nowReminder` |
 
-The last three files are bookkeeping, not content. `capsule.md` is the full ledger; the conductor normally sees only the packet projection built from it.
+Writers: hooks own `goal`, `journal`, `jobs`, `capsule`, `injection`, `packet`, and `now`; the conductor's MCP tools write `brief.json`, `plan.json`, `last-check.json`, `worktrees.json`, and `decisions.jsonl`; the adapter writes `session.json`.
+Workers never write state files: they return one JSON envelope, and `SubagentStop` stores it.
+`last-check.json` has one authority: a harness check or a successful `land`, never a worker's self-report.
+
+The last three files are bookkeeping, not content. `capsule.md` is a derived full ledger rebuilt at `SessionStart`, `UserPromptSubmit`, `PreCompact`, and `Stop`; it is not injected every turn.
+The injected context is the packet, built directly from `goal.json`, `brief.json`, `plan.json`, `jobs.json`, and `last-check.json`.
 
 ## 2. Data structures
 
@@ -138,14 +159,17 @@ The brief is the durable contract shared by the conductor, the worker, and the c
 
 | Event | Target | Payload | Budget | Source |
 |---|---|---|---|---|
-| `SessionStart` | conductor | Conductor policy plus the full packet | Packet at most 1,800 tokens | `conductorInjection` |
-| `UserPromptSubmit` | conductor | Turn anchor plus only the packet sections that changed | Packet at most 1,800 tokens; measured about 216 tokens per turn | `conductorTurnInjection` |
-| `SubagentStart` | worker | Worker contract, goal, acceptance, constraints, brief | Fitted to 900 tokens | `workerInjection` |
+| `SessionStart` | conductor | Conductor policy plus the complete packet | Packet at most 1,800 tokens, plus the policy | `conductorInjection` |
+| `UserPromptSubmit` | conductor | Turn anchor plus only the packet sections that changed | Source packet at most 1,800 tokens; injected about 216 tokens per turn | `conductorTurnInjection` |
+| `SubagentStart` | worker | Worker contract, goal, acceptance, constraints, brief | 900 tokens in total; brief pre-clipped to 1,000 characters | `workerInjection` |
 | `PreToolUse` | conductor and worker | No context; allow or deny the tool call | None | `hook-policy.mjs` |
 | `SubagentStop` | none | Parses the envelope, stores an artifact, updates the job and plan | None | `onSubagentStop` |
 | `PostToolUse` | conductor | Compacted worker envelope plus a `[NOW]` frontier reminder | Envelope cap plus one line | `compactEnvelope` / `nowReminder` |
-| `PreCompact` | none | Writes the capsule and a compaction metric; the next `SessionStart` re-injects | None | `onPreCompact` |
+| `PreCompact` | none | Rebuilds the capsule and writes a compaction metric; the next `SessionStart` re-injects the policy and packet | None | `onPreCompact` |
 | `Stop` | conductor | Denies stop when code worktrees are unlanded; otherwise writes metrics | None | `onStop` |
+
+At `SessionStart` the hook records a hash per packet section in `injection.json`. On each later turn it rebuilds the packet, compares hashes, and injects only changed sections plus the anchor; removed sections are listed by title.
+`packet.json` remembers the previous plan statuses and check label, which is how the packet renders `CHANGED`.
 
 The worker never receives `plan.json`, `jobs.json`, `journal.md`, or another task's state. Task-specific content (exact paths, method, output format) comes from the conductor's `Agent`/`Task` prompt, which is not truncated by the `SubagentStart` hook.
 
@@ -175,7 +199,7 @@ sequenceDiagram
 ```
 
 1. `UserPromptSubmit` sets the goal on the first prompt, replaces it on a fresh substantive prompt, or appends to the journal; it then builds the packet and injects the anchor plus changed sections.
-2. The conductor reads the anchor, creates the brief and plan when they are missing, and chooses a delivery unit.
+2. The conductor reads the anchor, creates the brief and plan when they are missing, and chooses a delivery unit: one plan task with one owner, one brief/check set, and one land boundary.
 3. The conductor writes the dispatch prompt with the exact `task_id`, input paths, method, output path, and forbidden actions.
 4. `SubagentStart` creates the job and injects the worker contract, goal, and brief. The worker does not see the plan.
 5. The worker reads the inputs, produces the artifact, and returns one JSON envelope.
@@ -183,7 +207,7 @@ sequenceDiagram
 7. The conductor runs the deterministic check (`enhance_check`) or `land` for code. Only that result can complete a task.
 8. The conductor records a decision when it must survive the session, and the next prompt starts at step 1 with a delta anchor.
 
-The current conductor policy makes step 2 a delegation by default. The proposed decision is whether to work inline, delegate one delivery unit, or merge several units into one worker; see the limitations below.
+The current policy forbids repository work, so step 2 is always a delegation; merging small items into one task is allowed, but working inline is not. The open decision is whether to add an inline-versus-delegate rule; see D-1 below.
 
 ## 5. Current limitations
 
