@@ -120,12 +120,29 @@ const TEMPLATES = [
   { make: precisionTemplate, defect: 'lost-precision' },
 ];
 
-/** Rotate the defect so 15 patches cover all six rules unevenly but repeatably. */
-export function reviewPlan(count = 15, seed = 7) {
+/**
+ * Build the rule bag once and shuffle it, so a run covers all six rules without
+ * revealing a fixed cycle. The defect slot is seeded per patch: position is not
+ * a signal, and every replica is suffixed so the defect cannot be found by name.
+ */
+export function reviewPlan(count = 15, seed = 7, slots = MODULE_SLOTS) {
+  const random = mulberry32(seed);
+  const bag = [];
+  for (let index = 0; index < count; index += 1) {
+    bag.push(TEMPLATES[index % TEMPLATES.length]);
+  }
+  for (let index = bag.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    [bag[index], bag[swap]] = [bag[swap], bag[index]];
+  }
   const plan = [];
   for (let index = 0; index < count; index += 1) {
-    const template = TEMPLATES[(index + seed) % TEMPLATES.length];
-    plan.push({ index: index + 1, template, seed: seed + index * 13 });
+    plan.push({
+      index: index + 1,
+      template: bag[index],
+      seed: seed + index * 13,
+      defectSlot: Math.floor(random() * Math.max(1, slots)),
+    });
   }
   return plan;
 }
@@ -141,14 +158,18 @@ export const PATCH_SIZES = { small: 30, medium: 120, large: 480 };
  * baseline's per-turn input trivial and the comparison meaningless.
  */
 export function renderModule(entry, slots = MODULE_SLOTS) {
+  const requested = Number.isInteger(entry.defectSlot) ? entry.defectSlot : 0;
+  const defectSlot = Math.min(Math.max(0, requested), Math.max(0, slots - 1));
   const parts = [];
   for (let slot = 0; slot < slots; slot += 1) {
-    const template = TEMPLATES[(entry.index + slot) % TEMPLATES.length];
-    const defect = slot === 0 ? entry.template.defect : null;
+    const planted = slot === defectSlot;
+    const template = planted
+      ? entry.template
+      : TEMPLATES[(entry.index + slot) % TEMPLATES.length];
+    const defect = planted ? entry.template.defect : null;
     const seed = entry.seed + slot * 7;
     const { name, doc, body, extra } = template.make(seed, defect);
-    const suffix = slot === 0 ? '' : String(slot);
-    parts.push(`${doc}\nexport function ${name}${suffix}(values) {\n${body}\n}\n${extra}`);
+    parts.push(`${doc}\nexport function ${name}${slot}(values) {\n${body}\n}\n${extra}`);
   }
   return `${HEADER}\n${parts.join('\n')}`;
 }
@@ -210,10 +231,10 @@ export function buildReviewFixture(dir, { count = 15, seed = 7, slots = MODULE_S
   }, null, 2)}\n`, 'utf8');
   fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n', 'utf8');
   const planted = [];
-  for (const entry of reviewPlan(count, seed)) {
+  for (const entry of reviewPlan(count, seed, slots)) {
     const name = String(entry.index).padStart(2, '0');
     fs.writeFileSync(path.join(dir, 'patches', `${name}.patch`), renderPatch(entry, slots), 'utf8');
-    planted.push({ index: entry.index, rule: entry.template.defect });
+    planted.push({ index: entry.index, rule: entry.template.defect, defect_slot: entry.defectSlot });
   }
   return planted;
 }
