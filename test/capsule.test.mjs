@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
-import { buildCapsule, conductorInjection, sessionCard, workerContract } from '../src/core/capsule.mjs';
+import { buildCapsule, conductorInjection, conductorTurnInjection, sessionCard, workerContract } from '../src/core/capsule.mjs';
 import { buildPacket } from '../src/core/packet.mjs';
 import { estimateTokens } from '../src/core/metrics.mjs';
 import {
   appendDecision,
   initStore,
+  writeBrief,
   writeGoal,
   writeLastCheck,
   writePlan,
@@ -37,6 +38,27 @@ test('hook injection and MCP state share one capsule budget', () => {
   assert.match(injection, /does not inject worker contracts/);
   const injected = conductorInjection(root, { contractMode: 'injected' });
   assert.match(injected, /injects the worker contract/);
+});
+
+test('the turn anchor keeps next and checks visible after state settles', () => {
+  const root = makeRoot();
+  writeBrief(root, { profile: 'code', checks: ['command:test'] });
+  writePlan(root, [{ id: 't1', title: 'ship it', status: 'pending' }], { replace: true });
+
+  const first = conductorTurnInjection(root);
+  assert.equal(first.mode, 'delta');
+  assert.match(first.text, /next: \[pending\] t1 ship it/);
+  assert.match(first.text, /checks: command:test/);
+  assert.match(first.text, /do not call enhance_brief again this turn/);
+  assert.match(first.text, /do not call enhance_state this turn/);
+
+  const second = conductorTurnInjection(root);
+  assert.equal(second.mode, 'anchor');
+  assert.match(second.text, /State is unchanged since your last turn/);
+  assert.match(second.text, /next: \[pending\] t1 ship it/);
+  assert.match(second.text, /checks: command:test/);
+  assert.match(second.text, /call it once only to add the next task/);
+  assert.ok(second.tokens < first.tokens);
 });
 
 test('capsule locks the PROJECT path and the policy covers it plus misconfigured checkers', () => {
