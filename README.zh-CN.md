@@ -78,6 +78,7 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
 - [docs/README.md](docs/README.md) — 文档地图与权威顺序。
 - [INSTALL.md](INSTALL.md) — Qoder 与 ZCode 安装及回滚 runbook。
 - [docs/architecture.md](docs/architecture.md) — 架构与不变量。
+- [docs/state.md](docs/state.zh-CN.md) — 状态文件、hook 注入与任务生命周期。
 - [docs/adapters.md](docs/adapters.md) — adapter 契约与能力矩阵。
 - [docs/worktrees.md](docs/worktrees.md) — 代码任务的隔离 git worktree。
 - [docs/brief-checks.md](docs/brief-checks.md) — 共享 brief 与确定性检查。

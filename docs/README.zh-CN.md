@@ -9,6 +9,7 @@
 | [../README.md](../README.md) | 这个项目是什么、状态、文档清单 | 入口 |
 | [../INSTALL.md](../INSTALL.md) | 安装、升级、回滚、doctor | 命令与安装步骤 |
 | [architecture.md](architecture.md) | 不变量、状态模型、hook 生命周期 | 控制面设计 |
+| [state.md](state.md) | 状态文件、数据结构、hook 注入、任务生命周期 | 状态与 context 布局 |
 | [adapters.md](adapters.md) | adapter 契约与各 harness 能力矩阵 | harness 支持 |
 | [qoder-adapter.md](qoder-adapter.md) | Qoder 路径、安装布局、hook 载荷 | Qoder 专属设置 |
 | [worktrees.md](worktrees.md) | 代码 worktree、派发门禁、land | 代码交付 |
