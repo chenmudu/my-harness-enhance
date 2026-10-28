@@ -174,6 +174,28 @@ test('a reported window turns ratios into comparable token counts', () => {
   assert.equal(unknown.context.last, 0.25);
 });
 
+test('payload share is injected tokens over that turn\'s context', () => {
+  const summary = summarizeTurns([
+    { cli_ok: true, duration_ms: 1, context_tokens: 1000, injected_tokens: 10, payload_share: 0.01, check: { ok: true } },
+    { cli_ok: true, duration_ms: 1, context_tokens: 2000, injected_tokens: 40, payload_share: 0.02, check: { ok: true } },
+  ]);
+  assert.equal(summary.payload.turns, 2);
+  assert.equal(summary.payload.avg, 0.015);
+  assert.equal(summary.payload.last, 0.02);
+  assert.equal(summary.payload.injected_tokens, 50);
+  assert.equal(summary.payload.of_final, 0.025);
+
+  const run = {
+    arm: 'treatment',
+    repeat: 1,
+    session_id: 't1',
+    summary,
+  };
+  const ab = summarizeAb([run], { model: 'Qwen3.8-Flash', turns: 2, repeats: 1 });
+  assert.equal(ab.arms.treatment.context.payload_share_avg, 0.015);
+  assert.match(renderSummaryMarkdown(ab), /payload share/);
+});
+
 test('summaries refuse a ratio comparison when the arms used different denominators', () => {
   const run = (arm, window) => ({
     arm,
@@ -426,7 +448,17 @@ test('the summary carries composition and billed credits per arm', () => {
     summary: summarizeTurns([
       { cli_ok: true, duration_ms: 1, context_usage_ratio: 0.1, context_window: 200000, context_tokens: 20000 },
     ]),
-    composition: { assistant: 100, tool_results: 500, worker_results: 50, attachments: 5, total: 655, by_tool: { Read: 500 } },
+    composition: {
+      assistant: 100,
+      assistant_text: 60,
+      assistant_thinking: 25,
+      assistant_tool_use: 15,
+      tool_results: 500,
+      worker_results: 50,
+      attachments: 5,
+      total: 655,
+      by_tool: { Read: 500 },
+    },
     cost: { credits: 1.25, requests: 3, model: 'gfmodel' },
   });
   const summary = summarizeAb([run('baseline'), run('treatment')], { turns: 1, repeats: 1 });
@@ -434,7 +466,7 @@ test('the summary carries composition and billed credits per arm', () => {
   assert.equal(summary.arms.treatment.composition.tool_results, 500);
   const markdown = renderSummaryMarkdown(summary);
   assert.match(markdown, /credits/);
-  assert.match(markdown, /\| baseline \|.*\| 100 \| 500 \| 50 \|/);
+  assert.match(markdown, /\| baseline \|.*\| 60 \| 25 \| 15 \| 500 \| 50 \|/);
   assert.match(markdown, /estimated tokens from the transcript/);
 });
 

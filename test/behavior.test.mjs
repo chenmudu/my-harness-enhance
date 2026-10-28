@@ -176,6 +176,23 @@ test('composition splits assistant, tool and worker tokens', () => {
   assert.equal(summarizeComposition(null).total, 0);
 });
 
+test('assistant output splits into text, thinking, and tool input', () => {
+  const out = summarizeComposition([{
+    type: 'assistant',
+    message: {
+      content: [
+        { type: 'text', text: 'hello world' },
+        { type: 'thinking', thinking: 'let me think about it' },
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a' } },
+      ],
+    },
+  }]);
+  assert.ok(out.assistant_text > 0);
+  assert.ok(out.assistant_thinking > 0);
+  assert.ok(out.assistant_tool_use > 0);
+  assert.equal(out.assistant, out.assistant_text + out.assistant_thinking + out.assistant_tool_use);
+});
+
 test('cost sums the credits the CLI reports', () => {
   const entries = [
     { type: 'assistant', message: { model: 'gfmodel', usage: { credits: 0.25 } } },

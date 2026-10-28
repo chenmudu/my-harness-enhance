@@ -255,16 +255,33 @@ function blockText(block) {
 export function summarizeComposition(entries) {
   const events = Array.isArray(entries) ? entries : [];
   const toolNames = new Map();
-  const out = { assistant: 0, tool_results: 0, worker_results: 0, attachments: 0, by_tool: {} };
+  const out = {
+    assistant: 0,
+    assistant_text: 0,
+    assistant_thinking: 0,
+    assistant_tool_use: 0,
+    tool_results: 0,
+    worker_results: 0,
+    attachments: 0,
+    by_tool: {},
+  };
   for (const entry of events) {
     if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
       for (const block of entry.message.content) {
         if (!block) continue;
         if (block.type === 'tool_use') {
           toolNames.set(block.id, String(block.name || ''));
-          out.assistant += estimateTokens(JSON.stringify(block.input ?? {}));
+          const tokens = estimateTokens(JSON.stringify(block.input ?? {}));
+          out.assistant_tool_use += tokens;
+          out.assistant += tokens;
+        } else if (block.type === 'thinking') {
+          const tokens = estimateTokens(blockText(block));
+          out.assistant_thinking += tokens;
+          out.assistant += tokens;
         } else {
-          out.assistant += estimateTokens(blockText(block));
+          const tokens = estimateTokens(blockText(block));
+          out.assistant_text += tokens;
+          out.assistant += tokens;
         }
       }
       continue;

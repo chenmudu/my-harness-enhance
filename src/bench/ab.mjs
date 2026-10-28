@@ -532,6 +532,14 @@ export function summarizeTurns(turns = []) {
   const lastHooks = [...turns].reverse().find((turn) => turn.hooks)?.hooks || null;
   const first = context.length ? context[0] : null;
   const last = context.length ? context[context.length - 1] : null;
+  const shares = turns
+    .map((turn) => turn.payload_share)
+    .filter((value) => typeof value === 'number' && Number.isFinite(value));
+  const injectedTotal = turns.reduce(
+    (total, turn) => total + (typeof turn.injected_tokens === 'number' ? turn.injected_tokens : 0),
+    0,
+  );
+  const finalContext = tokens.length ? tokens[tokens.length - 1] : null;
   return {
     turns: turns.length,
     cli_ok: turns.filter((turn) => turn.cli_ok).length,
@@ -552,6 +560,17 @@ export function summarizeTurns(turns = []) {
         : null,
     },
     checks_ok: turns.filter((turn) => turn.check?.ok).length,
+    payload: shares.length
+      ? {
+        turns: shares.length,
+        avg: Math.round((shares.reduce((total, value) => total + value, 0) / shares.length) * 10000) / 10000,
+        last: shares[shares.length - 1],
+        min: Math.min(...shares),
+        max: Math.max(...shares),
+        injected_tokens: injectedTotal,
+        of_final: finalContext ? Math.round((injectedTotal / finalContext) * 10000) / 10000 : null,
+      }
+      : null,
     final_check: turns.length ? turns[turns.length - 1].check : null,
     hooks: lastHooks
       ? { entries: lastHooks.entries, events: lastHooks.events, denials: lastHooks.denials, jobs: lastHooks.jobs, injection: lastHooks.injection }
@@ -577,6 +596,7 @@ async function runArm({
   const sessionId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
   const turns = [];
+  let injectedSoFar = 0;
   const session = runSession({
     cli,
     sessionId,
@@ -602,6 +622,15 @@ async function runArm({
         : '';
       const ratio = numberOrNull(payload?.usage?.context_usage_ratio ?? payload?.context_usage_ratio);
       const window = contextWindowOf(readTranscript(transcriptPath(configDir, workspace, sessionId)));
+      const contextTokens = ratio !== null && window ? Math.round(ratio * window) : null;
+      const injectedSum = hooks?.injection?.injectedSum;
+      let injectedTurn = null;
+      let payloadShare = null;
+      if (typeof injectedSum === 'number') {
+        injectedTurn = Math.max(0, injectedSum - injectedSoFar);
+        injectedSoFar = injectedSum;
+        if (contextTokens) payloadShare = Math.round((injectedTurn / contextTokens) * 10000) / 10000;
+      }
       turns.push({
         index: index + 1,
         started_at: started,
@@ -613,7 +642,9 @@ async function runArm({
         session_id: payload?.session_id || sessionId,
         context_usage_ratio: ratio,
         context_window: window,
-        context_tokens: ratio !== null && window ? Math.round(ratio * window) : null,
+        context_tokens: contextTokens,
+        injected_tokens: injectedTurn,
+        payload_share: payloadShare,
         result_chars: String(payload?.result || '').length,
         permission_denials: Array.isArray(payload?.permission_denials)
           ? payload.permission_denials.length
@@ -708,6 +739,7 @@ export function summarizeAb(runs, meta = {}) {
       context_last: [],
       context_tokens_delta: [],
       context_tokens_last: [],
+      payload_shares: [],
       context_windows: [],
       duration_ms: 0,
       denials: 0,
@@ -732,6 +764,7 @@ export function summarizeAb(runs, meta = {}) {
     bucket.context_last.push(run.summary.context.last);
     bucket.context_tokens_delta.push(run.summary.context.tokens?.delta ?? null);
     bucket.context_tokens_last.push(run.summary.context.tokens?.last ?? null);
+    bucket.payload_shares.push(run.summary.payload?.avg ?? null);
     bucket.context_windows.push(run.summary.context.window ?? null);
     bucket.duration_ms += run.summary.duration_ms;
     bucket.denials += Object.values(run.summary.hooks?.denials || {}).reduce((total, value) => total + value, 0);
@@ -743,9 +776,20 @@ export function summarizeAb(runs, meta = {}) {
     }
     if (run.composition) {
       bucket.composition = bucket.composition || {
-        assistant: 0, tool_results: 0, worker_results: 0, attachments: 0, total: 0, by_tool: {},
+        assistant: 0,
+        assistant_text: 0,
+        assistant_thinking: 0,
+        assistant_tool_use: 0,
+        tool_results: 0,
+        worker_results: 0,
+        attachments: 0,
+        total: 0,
+        by_tool: {},
       };
-      for (const key of ['assistant', 'tool_results', 'worker_results', 'attachments', 'total']) {
+      for (const key of [
+        'assistant', 'assistant_text', 'assistant_thinking', 'assistant_tool_use',
+        'tool_results', 'worker_results', 'attachments', 'total',
+      ]) {
         bucket.composition[key] += run.composition[key] || 0;
       }
       for (const [name, tokens] of Object.entries(run.composition.by_tool || {})) {
@@ -787,6 +831,7 @@ export function summarizeAb(runs, meta = {}) {
         last_avg: average(bucket.context_last),
         tokens_delta_avg: average(bucket.context_tokens_delta),
         tokens_last_avg: average(bucket.context_tokens_last),
+        payload_share_avg: average(bucket.payload_shares),
         window: bucket.context_windows.filter((value) => typeof value === 'number' && value > 0).pop() ?? null,
       },
       duration_ms: bucket.duration_ms,
@@ -837,8 +882,8 @@ export function renderSummaryMarkdown(summary) {
   lines.push(`- repeats: ${summary.repeats}`);
   if (summary.patch_size) lines.push(`- patch size: ${summary.patch_size}`);
   lines.push('');
-lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | credits med [min-max] | conductor | worker | assistant | tool results | worker results | minutes | denials |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx tokens last | payload share | credits med [min-max] | conductor | worker | assistant text | thinking | tool use | tool results | worker results | minutes | denials |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const [arm, value] of Object.entries(summary.arms)) {
     const c = value.composition;
     const credits = value.credits_median === null || value.credits_median === undefined
@@ -850,13 +895,14 @@ lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx t
     lines.push(
       `| ${arm} | ${value.runs} | ${value.turns} | ${value.cli_failures} | ${value.turn_timeouts || 0} | ` +
       `${value.final_tests_ok}/${value.runs} | ${value.context.tokens_last_avg ?? 'n/a'} | ` +
-      `${credits} | ${value.conductor_credits ?? value.credits ?? 'n/a'} | ${value.worker_credits ?? 'n/a'} | ` +
-      `${c ? c.assistant : 'n/a'} | ${c ? c.tool_results : 'n/a'} | ` +
+      `${value.context.payload_share_avg ?? 'n/a'} | ${credits} | ${value.conductor_credits ?? value.credits ?? 'n/a'} | ${value.worker_credits ?? 'n/a'} | ` +
+      `${c ? c.assistant_text : 'n/a'} | ${c ? c.assistant_thinking : 'n/a'} | ` +
+      `${c ? c.assistant_tool_use : 'n/a'} | ${c ? c.tool_results : 'n/a'} | ` +
       `${c ? c.worker_results : 'n/a'} | ${minutes} | ${value.denials} |`,
     );
   }
   lines.push('');
-  lines.push('Credits are what the CLI billed; the three content columns are estimated tokens from the transcript');
+  lines.push('Credits are what the CLI billed; the content columns are estimated tokens from the transcript.');
   lines.push('Credits sum the conductor session and every `subagents/agent-*.jsonl`; `conductor-only` means the run could not see worker usage.');
   const providers = Object.values(summary.arms).map((value) => value.provider);
   lines.push(providers.some((provider) => provider?.available)
@@ -877,6 +923,7 @@ lines.push('| arm | runs | turns | cli failures | timeouts | final tests | ctx t
   lines.push('Context tokens are `context_usage_ratio` times the session-reported window;');
   lines.push('ratios from two arms are only comparable when both reported the same window.');
   lines.push('Context values are the model-reported `context_usage_ratio` after each turn.');
+  lines.push('Payload share is the layer\'s injected tokens over that turn\'s context tokens; the baseline has no layer, so it is n/a.');
   lines.push('Denials are hook-reported conductor or worker tool denials.');
   lines.push('Timeouts are turns the runner cut at the per-turn limit; they are counted in cli failures too.');
   const behaviorRows = Object.entries(summary.arms).filter(([, value]) => value.behavior);
