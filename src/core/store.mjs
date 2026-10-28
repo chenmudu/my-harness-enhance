@@ -279,8 +279,16 @@ function withAttention(task, previous = null) {
   const blockers = Array.isArray(rest.blockers)
     ? rest.blockers.map((item) => String(item).slice(0, 120)).slice(0, 5)
     : (previous?.blockers || []);
+  const checks = Array.isArray(rest.checks)
+    ? rest.checks.map((item) => String(item).trim().slice(0, 160)).filter(Boolean).slice(0, 5)
+    : (Array.isArray(previous?.checks) ? previous.checks : []);
+  const outputs = Array.isArray(rest.outputs)
+    ? rest.outputs.map((item) => String(item).trim().slice(0, 200)).filter(Boolean).slice(0, 10)
+    : (Array.isArray(previous?.outputs) ? previous.outputs : []);
   return {
     ...rest,
+    checks,
+    outputs,
     next_action: String(rest.next_action ?? previous?.next_action ?? '').slice(0, 200),
     blockers,
     priority: Number.isFinite(Number(rest.priority))

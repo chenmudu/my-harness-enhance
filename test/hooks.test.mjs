@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { initStore, readGoal, readJobs, readMetrics, readPlan, readSessions, storePaths, upsertJob, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
+import { initStore, readGoal, readJobs, readMetrics, readPlan, readSessions, storePaths, upsertJob, upsertWorktree, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
 import { canonicalPath } from '../src/core/state-root.mjs';
 import { saveConfig } from '../src/core/config.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
@@ -349,6 +349,108 @@ test('SubagentStart creates a job and injects the worker contract', () => {
   assert.match(job.role, /investigate/);
   assert.match(job.role, /plan/);
   assert.match(job.role, /verify_read/);
+});
+
+test('a pending dispatch gives SubagentStart the task card and task_id', () => {
+  const root = setupRoot();
+  writeBrief(root, { profile: 'code', checks: ['command:test'] });
+  writePlan(root, [{
+    id: 't1',
+    title: 'ship it',
+    status: 'pending',
+    acceptance: 'tests pass',
+    checks: ['command:test'],
+    outputs: ['out.txt'],
+  }], { replace: true });
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'mhe-hooks-wt-'));
+  upsertWorktree(root, 't1', { path: wt, status: 'active' });
+
+  const pre = runHook(root, 'PreToolUse', {
+    model: 'qfmodel',
+    tool_name: 'Agent',
+    tool_input: {
+      subagent_type: 'general-purpose',
+      prompt: `task_id: t1\nworktree: ${wt}\nDo the work.`,
+    },
+  });
+  assert.equal(pre.stdout.trim(), '');
+  const pending = readJobs(root).jobs.find((job) => job.status === 'pending');
+  assert.ok(pending);
+  assert.equal(pending.task_id, 't1');
+  assert.equal(pending.recorded_by, 'qoder-pre-tool-use');
+
+  const started = runHook(root, 'SubagentStart', {
+    agent_id: 'agent_t1',
+    agent_type: 'general-purpose',
+  });
+  const text = parseJson(started.stdout).hookSpecificOutput.additionalContext;
+  assert.match(text, /task_id: t1/);
+  assert.match(text, /\[TASK CARD\]/);
+  assert.match(text, /title: ship it/);
+  assert.match(text, /checks: command:test/);
+  assert.match(text, /out\.txt/);
+  const job = readJobs(root).jobs.find((item) => item.agent_id === 'agent_t1');
+  assert.equal(job.status, 'running');
+  assert.equal(job.task_id, 't1');
+  assert.equal(readJobs(root).jobs.filter((item) => item.status === 'pending').length, 0);
+});
+
+test('an expired pending dispatch is not claimed by a later worker', () => {
+  const root = setupRoot();
+  upsertJob(root, 'old-pending', {
+    type: 'general-purpose',
+    status: 'pending',
+    task_id: 't1',
+    recorded_by: 'qoder-pre-tool-use',
+    created_at: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+  });
+  const started = runHook(root, 'SubagentStart', {
+    agent_id: 'agent_late',
+    agent_type: 'general-purpose',
+  });
+  const text = parseJson(started.stdout).hookSpecificOutput.additionalContext;
+  assert.match(text, /task_id: unassigned/);
+  assert.doesNotMatch(text, /\[TASK CARD\]/);
+  const jobs = readJobs(root).jobs;
+  assert.equal(jobs.find((item) => item.id === 'old-pending').status, 'pending');
+  assert.equal(jobs.find((item) => item.agent_id === 'agent_late').status, 'running');
+});
+
+test('parallel same-type dispatches claim pending jobs FIFO', () => {
+  const root = setupRoot();
+  writeBrief(root, { profile: 'code', checks: ['command:test'] });
+  writePlan(root, [
+    { id: 't1', title: 'first', status: 'pending', checks: ['command:test'] },
+    { id: 't2', title: 'second', status: 'pending', checks: ['command:test'] },
+  ], { replace: true });
+  const worktrees = ['t1', 't2'].map((id) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `mhe-hooks-${id}-`));
+    upsertWorktree(root, id, { path: dir, status: 'active' });
+    return { id, dir };
+  });
+  for (const { id, dir } of worktrees) {
+    const pre = runHook(root, 'PreToolUse', {
+      model: 'qfmodel',
+      tool_name: 'Agent',
+      tool_input: {
+        subagent_type: 'general-purpose',
+        prompt: `task_id: ${id}\nworktree: ${dir}\nDo the work.`,
+      },
+    });
+    assert.equal(pre.stdout.trim(), '', id);
+  }
+  const first = parseJson(runHook(root, 'SubagentStart', {
+    agent_id: 'agent_first',
+    agent_type: 'general-purpose',
+  }).stdout).hookSpecificOutput.additionalContext;
+  const second = parseJson(runHook(root, 'SubagentStart', {
+    agent_id: 'agent_second',
+    agent_type: 'general-purpose',
+  }).stdout).hookSpecificOutput.additionalContext;
+  assert.match(first, /task_id: t1/);
+  assert.match(first, /title: first/);
+  assert.match(second, /task_id: t2/);
+  assert.match(second, /title: second/);
 });
 
 test('SubagentStart is silent for agents outside the capability map', () => {

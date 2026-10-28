@@ -43,6 +43,8 @@ import {
   conductorDenyReason,
   denyTool,
   dispatchGateReason,
+  dispatchText,
+  DISPATCH_TASK_ID_RE,
   harnessProjectArg,
   hookJson,
   isAllowedConductorTool,
@@ -56,6 +58,7 @@ import {
   roleFor,
   sessionIsConductor,
   stampWorkerProvenance,
+  subagentOf,
   toolNameOf,
   verificationGateReason,
   workerPolicy,
@@ -82,6 +85,45 @@ function recordMetric(root, event, session = '') {
   } catch {
     // Metrics must never break a hook.
   }
+}
+
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Claim the oldest pending dispatch for this session and worker type. Qoder
+ * does not pass the dispatch's task_id to SubagentStart, so PreToolUse records
+ * it here. FIFO is the honest limit: two same-type dispatches in flight can
+ * swap their task ids; the envelope's task_id remains authoritative for plan
+ * sync.
+ */
+function findPendingJob(root, { worker, session = '', sessionId = '' } = {}) {
+  const now = Date.now();
+  return (readJobs(root, session).jobs || [])
+    .filter((job) =>
+      job.status === 'pending'
+      && job.recorded_by === 'qoder-pre-tool-use'
+      && String(job.type || '') === worker
+      && (sessionId ? String(job.session_id || '') === sessionId : true))
+    .filter((job) => {
+      const at = Date.parse(job.created_at || 0) || 0;
+      return at > 0 && (now - at) <= PENDING_TTL_MS;
+    })
+    .sort((a, b) => (Date.parse(a.created_at || 0) || 0) - (Date.parse(b.created_at || 0) || 0))[0] || null;
+}
+
+function recordPendingDispatch(root, config, toolInput, text, payload, session) {
+  const worker = subagentOf(toolInput);
+  const matched = text.match(DISPATCH_TASK_ID_RE);
+  return upsertJob(root, newJobId('job'), {
+    agent_id: '',
+    type: worker,
+    role: worker ? roleFor(config, worker) : 'worker',
+    task_id: matched ? matched[1] : '',
+    status: 'pending',
+    depth: 1,
+    session_id: sessionIdOf(payload),
+    recorded_by: 'qoder-pre-tool-use',
+  }, session);
 }
 
 function landReminder(root, envelope, agentType = '', session = '') {
@@ -281,6 +323,7 @@ async function onPreToolUse(payload, root, config) {
       denyTool(gateReason);
       return;
     }
+    recordPendingDispatch(root, config, toolInput, dispatchText(toolInput), payload, session);
   }
   log(root, { event: EVENT, role: 'conductor', tool, allow }, config);
   if (tool === 'Agent' || tool === 'Task') {
@@ -301,7 +344,13 @@ async function onSubagentStart(payload, root, config) {
 
   const session = sessionOf(payload);
   const agentId = String(payload.agent_id || payload.agentId || '');
-  const jobId = agentId || newJobId('job');
+  const pending = findPendingJob(root, {
+    worker: agentType,
+    session,
+    sessionId: sessionIdOf(payload),
+  });
+  const jobId = pending?.id || agentId || newJobId('job');
+  const taskId = pending?.task_id || '';
   const role = roleFor(config, agentType);
   upsertJob(root, jobId, {
     agent_id: agentId,
@@ -309,12 +358,15 @@ async function onSubagentStart(payload, root, config) {
     role,
     status: 'running',
     depth: 1,
+    task_id: taskId,
+    recorded_by: pending?.recorded_by || 'qoder-subagent-start',
   }, session);
 
   const injection = workerInjection(root, {
     agentType,
     role,
     jobId,
+    taskId,
     session,
   });
   writeJson(hookJson('SubagentStart', { additionalContext: injection }));
