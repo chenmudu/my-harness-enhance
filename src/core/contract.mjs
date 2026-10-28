@@ -300,6 +300,8 @@ export function validateEnvelope(value, limits = DEFAULT_CONFIG.envelope) {
     cost,
     confidence,
     task_id: taskId,
+    brief_hash: clip(asString(value.brief_hash || ''), 80),
+    task_hash: clip(asString(value.task_hash || ''), 80),
     check_result: checkResult,
     warnings: warnings.slice(0, 8),
   };
@@ -402,6 +404,8 @@ export function compactEnvelope(envelope, maxChars = DEFAULT_CONFIG.envelope.max
     cost: envelope.cost || null,
     confidence: envelope.confidence ?? null,
     task_id: envelope.task_id || '',
+    brief_hash: envelope.brief_hash || '',
+    task_hash: envelope.task_hash || '',
     check_result: envelope.check_result || null,
     warnings: Array.isArray(envelope.warnings) ? [...envelope.warnings] : [],
   };

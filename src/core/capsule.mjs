@@ -20,6 +20,7 @@ import { listArtifacts } from './artifacts.mjs';
 import { scheduleNext } from './attention.mjs';
 import { buildPacket } from './packet.mjs';
 import { roleHintForAgent, workerMenu } from './capabilities.mjs';
+import { workerHandshake } from './handshake.mjs';
 
 export const CONDUCTOR_POLICY = `[MY-HARNESS-ENHANCE CONDUCTOR]
 You are the conductor, the only decision-maker in this session.
@@ -426,9 +427,15 @@ export function conductorTurnInjection(root, {
   const checks = Array.isArray(brief?.checks) && brief.checks.length
     ? brief.checks.join(', ')
     : 'none';
+  const jobs = readJobs(root, session).jobs || [];
+  const latestJob = jobs[jobs.length - 1] || null;
+  const staleJob = latestJob?.status === 'invalid_result' && latestJob?.error_class === 'stale_contract'
+    ? latestJob
+    : null;
   const guards = [
     `next: ${next}`,
     `checks: ${checks}`,
+    staleJob ? `stale: ${staleJob.task_id || staleJob.id} used an old brief/task; re-dispatch.` : '',
     'inline: one bounded enhance_recall + a short answer; any write, multi-file, test, or land goes to a worker.',
     'merge: small items with the same owner, checks, and context belong in one task/dispatch.',
     (plan.tasks || []).length
@@ -560,12 +567,13 @@ export function workerInjection(root, {
 } = {}) {
   const goal = readGoal(root, session);
   const brief = briefForInjection(readBrief(root, session), 1000);
+  const hashes = workerHandshake(root, { taskId, session });
   const contract = workerContract(agentType, {
     jobId,
     role,
     taskId,
-    briefHash,
-    taskHash,
+    briefHash: briefHash || hashes.brief_hash,
+    taskHash: taskHash || hashes.task_hash,
   });
   const card = taskCard(root, { taskId, session, maxChars: 1200 });
   const sections = [
