@@ -214,8 +214,8 @@ sequenceDiagram
 | ID | 限制 | 影响 | 预期修法 |
 |---|---|---|---|
 | D-1 | native `Read` 仍被拒绝；inline 读取必须走 `enhance_recall`（8,000 字符上限） | 大文件不能 inline 读取；conductor 必须委派或缩小查询 | 保持 inline 路径有界；没有路径/大小门禁前不开放 native Read |
-| D-2 | `SubagentStart` 没有传 `task_id`，注入的 contract 写的是 `task_id: unassigned` | job 与 plan 的关联依赖 conductor 的 prompt 和 envelope | 从派工文本解析 `task_id`，并注入结构化 task card |
-| D-3 | `fit(contract + goal + brief, 900)` 从尾部截断 | goal 一长就可能切掉 brief 和 checks；worker 看不到验收标准 | 给每个 section 分预算，并显式标记截断 |
+| D-2 | Qoder 按 session 和 worker type 匹配 pending dispatch（最老优先，10 分钟 TTL）；ZCode 从 prompt 解析 `task_id` | 并行同类型 dispatch 仍按 FIFO 匹配，envelope 的 `task_id` 仍是 plan sync 的权威 | 只有探针证实误配时才进一步收窄关联 |
+| D-3 | 注入是固定的 contract 加分段预算（task card、brief、goal、acceptance、constraints），每段有显式截断标记 | contract 占 900 token 上限里约 490，其余由各段共享 | 保持 contract 固定，降各段上限而不是抬高 900 |
 | D-4 | 回合 anchor 说不要调用 `enhance_state`，即使 packet 是 compact | conductor 无法补取 packet 省略的 section | packet mode 不是 `full` 时允许一次 state 调用 |
-| D-5 | worker 没有拿到 `brief_hash` 或 `plan_version` | 结果可能基于过期的 brief，复用 worker 时更明显 | 把版本放进 worker 注入，并要求 envelope 带回 |
+| D-5 | 注入 `brief_hash` 和 `task_hash`，并要求 envelope 带回；不一致按 `stale_contract` 拒绝且不同步 | 没有 hash 的结果按 legacy 接受并记 warning，旧 worker 仍能跑 | 保持 hash 覆盖范围稳定（不含 status/updated_at）；只有必要时再讨论全局版本 |
 | D-6 | 复用和合并没有建模成 adapter capability | Qoder 永远冷启动；ZCode 的复用无法由 policy 选择 | 在能力矩阵中加 `worker_resume` 和 `agent_messaging`，按能力分支 |
