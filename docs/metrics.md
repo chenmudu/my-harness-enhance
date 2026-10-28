@@ -265,6 +265,24 @@ both arms sample with `limit` reads and Grep; that row measures where sampling
 happens, not who read more. And re-reads are not a stable signal: 14 at 491
 lines, 2 at 1,931 lines / 3 turns, 0 at 1,931 lines / 15 turns.
 
+### Task-card policy (three repeats, Qwen3.8-Flash)
+
+Three turns of the `review` fixture at 1,931 lines. This cell adds the worker
+task card, per-section injection budgets, and the brief/task hash handshake;
+the tables above use the earlier policy and cannot be mixed with it.
+
+| arm | final checks | next-action hit | main context (tokens) | credits, worker included | wall (min) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| baseline | 3/3 | 8/9 | 79,829 | 3.84 | 1.3 |
+| treatment | 3/3 | 9/9 | 38,043 | 6.68 | 4.4 |
+
+Density held at 0.924 of the packet (0.918 under the earlier policy), and all
+nine dispatches carried a matching `task_id` and hash handshake. The extra cost
+is the worker session itself: 12-15 of 27-33 requests and 3.6-4.1 of 5.9-6.9
+credits per run. Removing all conductor overhead would still leave the worker
+loop, so the 2x wall and 1.25x billed-credit gates stay open as a property of
+delegation, not of conductor context.
+
 ## Acceptance metrics
 
 | Metric | What it proves | Target |
