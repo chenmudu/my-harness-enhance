@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
 import { CONDUCTOR_POLICY, buildCapsule, conductorInjection, conductorTurnInjection, sessionCard, taskCard, workerContract, workerInjection } from '../src/core/capsule.mjs';
+import { workerHandshake } from '../src/core/handshake.mjs';
 import { buildPacket } from '../src/core/packet.mjs';
 import { estimateTokens } from '../src/core/metrics.mjs';
 import {
@@ -14,6 +15,7 @@ import {
   writeGoal,
   writeLastCheck,
   writePlan,
+  upsertJob,
   upsertWorktree,
 } from '../src/core/store.mjs';
 
@@ -72,6 +74,24 @@ test('the turn anchor keeps next and checks visible after state settles', () => 
   assert.match(second.text, /checks: command:test/);
   assert.match(second.text, /call it once only to add the next task/);
   assert.ok(second.tokens < first.tokens);
+});
+
+test('the turn anchor names a stale-contract job so the conductor re-dispatches', () => {
+  const root = makeRoot();
+  writeBrief(root, { profile: 'code', checks: ['command:test'] });
+  writePlan(root, [{ id: 't1', title: 'ship it', status: 'pending' }], { replace: true });
+  upsertJob(root, 'job-1', {
+    type: 'execute',
+    task_id: 't1',
+    status: 'invalid_result',
+    error_class: 'stale_contract',
+  });
+
+  const turn = conductorTurnInjection(root);
+  assert.match(turn.text, /stale: t1 used an old brief\/task; re-dispatch\./);
+
+  upsertJob(root, 'job-2', { type: 'execute', task_id: 't1', status: 'ok' });
+  assert.doesNotMatch(conductorTurnInjection(root).text, /^stale:/m);
 });
 
 test('capsule locks the PROJECT path and the policy covers it plus misconfigured checkers', () => {
@@ -149,7 +169,13 @@ test('worker injection pins the contract and budgets every section', () => {
     outputs: ['out.txt'],
   }], { replace: true });
 
-  const contract = workerContract('general-purpose', { jobId: 'job-1', taskId: 't1' });
+  const hashes = workerHandshake(root, { taskId: 't1' });
+  const contract = workerContract('general-purpose', {
+    jobId: 'job-1',
+    taskId: 't1',
+    briefHash: hashes.brief_hash,
+    taskHash: hashes.task_hash,
+  });
   const injection = workerInjection(root, {
     agentType: 'general-purpose',
     jobId: 'job-1',
@@ -159,8 +185,8 @@ test('worker injection pins the contract and budgets every section', () => {
   assert.match(injection, /\[TASK CARD\]/);
   assert.match(injection, /BRIEF:/);
   assert.match(injection, /GOAL: Ship the endpoint/);
-  assert.match(injection, /brief_hash: unassigned/);
-  assert.match(injection, /task_hash: unassigned/);
+  assert.match(injection, /brief_hash: [0-9a-f]{16}/);
+  assert.match(injection, /task_hash: [0-9a-f]{16}/);
   assert.ok(estimateTokens(injection) <= 900, `tokens=${estimateTokens(injection)}`);
 
   writeGoal(root, {

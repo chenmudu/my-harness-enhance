@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { initStore, readGoal, readJobs, readMetrics, readPlan, readSessions, storePaths, upsertJob, upsertWorktree, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
+import { initStore, readBrief, readGoal, readJobs, readMetrics, readPlan, readSessions, storePaths, updatePlanTask, upsertJob, upsertWorktree, writeBrief, writeGoal, writeLastCheck, writePlan } from '../src/core/store.mjs';
+import { workerHandshake } from '../src/core/handshake.mjs';
 import { canonicalPath } from '../src/core/state-root.mjs';
 import { saveConfig } from '../src/core/config.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
@@ -516,6 +517,134 @@ test('SubagentStop keeps a checked result in_progress until enhance_check', () =
     }),
   });
   assert.equal(readPlan(root).tasks.find((task) => task.id === 'T1').status, 'in_progress');
+});
+
+function handshakeFixture({ extraTask = false } = {}) {
+  const root = setupRoot();
+  writeBrief(root, { profile: 'code', checks: ['command:test'] });
+  writePlan(root, [
+    {
+      id: 't1',
+      title: 'ship it',
+      status: 'pending',
+      acceptance: 'tests pass',
+      checks: ['command:test'],
+    },
+    ...(extraTask ? [{ id: 't2', title: 'other', status: 'pending' }] : []),
+  ], { replace: true });
+  const hashes = workerHandshake(root, { taskId: 't1' });
+  upsertJob(root, 'job_t1', {
+    agent_id: 'agent_t1',
+    type: 'general-purpose',
+    role: 'execute',
+    status: 'running',
+    task_id: 't1',
+    expected_brief_hash: hashes.brief_hash,
+    expected_task_hash: hashes.task_hash,
+  });
+  return { root, hashes };
+}
+
+function handshakeEnvelope(hashes, overrides = {}) {
+  return JSON.stringify({
+    ...valid,
+    task_id: 't1',
+    brief_hash: hashes.brief_hash,
+    task_hash: hashes.task_hash,
+    check_result: { ok: true, checker: 'command:test', findings: 0 },
+    ...overrides,
+  });
+}
+
+test('SubagentStop accepts a matching handshake and syncs the plan', () => {
+  const { root, hashes } = handshakeFixture();
+  const stopped = runHook(root, 'SubagentStop', {
+    agent_id: 'agent_t1',
+    agent_type: 'general-purpose',
+    result: handshakeEnvelope(hashes),
+  });
+  assert.equal(stopped.status, 0);
+  const job = readJobs(root).jobs.find((item) => item.id === 'job_t1');
+  assert.equal(job.status, 'ok');
+  assert.equal(job.handshake, 'ok');
+  assert.equal(job.error, '');
+  assert.equal(readPlan(root).tasks[0].status, 'in_progress');
+});
+
+test('SubagentStop rejects a mismatched handshake and leaves the plan untouched', () => {
+  const { root, hashes } = handshakeFixture();
+  runHook(root, 'SubagentStop', {
+    agent_id: 'agent_t1',
+    agent_type: 'general-purpose',
+    result: handshakeEnvelope(hashes, { brief_hash: '0'.repeat(16) }),
+  });
+  const job = readJobs(root).jobs.find((item) => item.id === 'job_t1');
+  assert.equal(job.status, 'invalid_result');
+  assert.equal(job.handshake, 'mismatch');
+  assert.equal(job.error_class, 'stale_contract');
+  assert.equal(job.retryable, true);
+  assert.match(job.error, /brief_hash mismatch/);
+  assert.equal(readPlan(root).tasks[0].status, 'pending');
+});
+
+test('a brief changed after dispatch rejects an otherwise matching result', () => {
+  const { root, hashes } = handshakeFixture();
+  writeBrief(root, { ...readBrief(root), checks: ['command:test', 'docs'] });
+  runHook(root, 'SubagentStop', {
+    agent_id: 'agent_t1',
+    agent_type: 'general-purpose',
+    result: handshakeEnvelope(hashes),
+  });
+  const job = readJobs(root).jobs.find((item) => item.id === 'job_t1');
+  assert.equal(job.status, 'invalid_result');
+  assert.match(job.error, /brief changed after dispatch/);
+  assert.equal(readPlan(root).tasks[0].status, 'pending');
+});
+
+test('an unrelated task update does not stale a worker result', () => {
+  const { root, hashes } = handshakeFixture({ extraTask: true });
+  updatePlanTask(root, 't2', { status: 'completed' });
+  runHook(root, 'SubagentStop', {
+    agent_id: 'agent_t1',
+    agent_type: 'general-purpose',
+    result: handshakeEnvelope(hashes),
+  });
+  const job = readJobs(root).jobs.find((item) => item.id === 'job_t1');
+  assert.equal(job.status, 'ok');
+  assert.equal(job.handshake, 'ok');
+});
+
+test('a legacy result without hashes is accepted with a warning', () => {
+  const { root } = handshakeFixture();
+  runHook(root, 'SubagentStop', {
+    agent_id: 'agent_t1',
+    agent_type: 'general-purpose',
+    result: JSON.stringify({
+      ...valid,
+      task_id: 't1',
+      check_result: { ok: true, checker: 'command:test', findings: 0 },
+    }),
+  });
+  const job = readJobs(root).jobs.find((item) => item.id === 'job_t1');
+  assert.equal(job.status, 'ok');
+  assert.equal(job.handshake, 'legacy');
+  assert.ok((job.envelope.warnings || []).some((warning) => /handshake missing/.test(warning)));
+});
+
+test('PostToolUse rewrites a stale result and marks the job', () => {
+  const { root, hashes } = handshakeFixture();
+  const posted = runHook(root, 'PostToolUse', {
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'general-purpose', prompt: 'task_id: t1' },
+    tool_response: handshakeEnvelope(hashes, { brief_hash: '1'.repeat(16) }),
+  });
+  const output = parseJson(posted.stdout).hookSpecificOutput.updatedToolOutput;
+  assert.match(output, /stale worker result/);
+  assert.match(output, /handshake_mismatch/);
+  const job = readJobs(root).jobs.find((item) => item.id === 'job_t1');
+  assert.equal(job.status, 'invalid_result');
+  assert.equal(job.handshake, 'mismatch');
+  assert.equal(readPlan(root).tasks[0].status, 'pending');
 });
 
 test('conductor cannot dispatch a verification worker before the deterministic check', () => {

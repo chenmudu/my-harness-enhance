@@ -25,6 +25,20 @@ test('valid envelope passes and is normalized', () => {
   assert.equal(result.value.evidence.length, 1);
 });
 
+test('handshake fields survive normalization and compaction', () => {
+  const result = validateEnvelope({
+    ...valid,
+    brief_hash: 'a'.repeat(16),
+    task_hash: 'b'.repeat(16),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.brief_hash, 'a'.repeat(16));
+  assert.equal(result.value.task_hash, 'b'.repeat(16));
+  const compact = JSON.parse(compactEnvelope(result.value, 6000));
+  assert.equal(compact.brief_hash, 'a'.repeat(16));
+  assert.equal(compact.task_hash, 'b'.repeat(16));
+});
+
 test('status aliases are normalized to the contract statuses', () => {
   for (const [raw, expected] of [
     ['done', 'ok'],
