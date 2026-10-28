@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
-import { buildCapsule, conductorInjection, conductorTurnInjection, sessionCard, workerContract } from '../src/core/capsule.mjs';
+import { CONDUCTOR_POLICY, buildCapsule, conductorInjection, conductorTurnInjection, sessionCard, workerContract } from '../src/core/capsule.mjs';
 import { buildPacket } from '../src/core/packet.mjs';
 import { estimateTokens } from '../src/core/metrics.mjs';
 import {
@@ -40,6 +40,16 @@ test('hook injection and MCP state share one capsule budget', () => {
   assert.match(injected, /injects the worker contract/);
 });
 
+test('inline reads stay bounded and do not open native Read', () => {
+  assert.match(CONDUCTOR_POLICY, /enhance_recall\(handle=<project-relative path>\)/);
+  assert.match(CONDUCTOR_POLICY, /Inline = one bounded enhance_recall/);
+  assert.match(CONDUCTOR_POLICY, /Delegate = any write, multiple files, a test\/land/);
+  assert.match(CONDUCTOR_POLICY, /Merge = small items with the same owner, checks, and context/);
+  assert.match(CONDUCTOR_POLICY, /no native Read\/Glob\/Grep/);
+  const { config } = loadConfig(makeRoot());
+  assert.equal(config.conductor.allowedTools.includes('Read'), false);
+});
+
 test('the turn anchor keeps next and checks visible after state settles', () => {
   const root = makeRoot();
   writeBrief(root, { profile: 'code', checks: ['command:test'] });
@@ -49,6 +59,8 @@ test('the turn anchor keeps next and checks visible after state settles', () => 
   assert.equal(first.mode, 'delta');
   assert.match(first.text, /next: \[pending\] t1 ship it/);
   assert.match(first.text, /checks: command:test/);
+  assert.match(first.text, /inline: one bounded enhance_recall/);
+  assert.match(first.text, /merge: small items with the same owner/);
   assert.match(first.text, /do not call enhance_brief again this turn/);
   assert.match(first.text, /do not call enhance_state this turn/);
 

@@ -207,13 +207,13 @@ sequenceDiagram
 7. The conductor runs the deterministic check (`enhance_check`) or `land` for code. Only that result can complete a task.
 8. The conductor records a decision when it must survive the session, and the next prompt starts at step 1 with a delta anchor.
 
-The current policy forbids repository work, so step 2 is always a delegation; merging small items into one task is allowed, but working inline is not. The open decision is whether to add an inline-versus-delegate rule; see D-1 below.
+The current policy allows one bounded inline read through `enhance_recall`; native `Read`/`Glob`/`Grep`, writes, and shell work remain delegated. Inline is a single bounded read plus a short answer; any write, multiple files, a test/land, or another tool is a worker dispatch; small items with the same owner, checks, and context merge into one task. See D-1 below.
 
 ## 5. Current limitations
 
 | ID | Limitation | Impact | Intended fix |
 |---|---|---|---|
-| D-1 | The conductor policy forbids repository work, so even a small read becomes a worker dispatch | Paid workers double the cost; free workers add wall clock and envelopes | Add an inline-versus-delegate-versus-merge decision rule based on artifact size, reuse, and isolation |
+| D-1 | Native `Read` remains denied; inline reads must use `enhance_recall` (8,000-char cap) | A large file cannot be read inline; the conductor must delegate or narrow the query | Keep the inline path bounded; do not add native Read without a path/size gate |
 | D-2 | `SubagentStart` does not pass `task_id`, so the injected contract says `task_id: unassigned` | Job and plan linkage relies on the conductor's prompt and the envelope | Parse `task_id` from the dispatch and inject a structured task card |
 | D-3 | `fit(contract + goal + brief, 900)` truncates from the tail | A long goal can cut the brief and its checks; the worker misses acceptance | Give each section a budget and mark truncation explicitly |
 | D-4 | The turn anchor says not to call `enhance_state`, even when the packet is compact | The conductor cannot fetch sections the packet omitted | Allow one state call when the packet mode is not `full` |

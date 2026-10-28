@@ -187,8 +187,8 @@ export function conductorDenyReason(tool, config) {
       + 'Use a registered worker role from the WORKERS mapping.';
   }
   return 'Conductor must not execute repository work. Delegate to a native worker via Agent, '
-    + 'or use the enhance_* state tools. '
-    + 'Do not read files, run commands, fetch the web, or call non-enhance MCP/skills directly.';
+    + 'or use the enhance_* state tools (enhance_recall for one bounded read). '
+    + 'Do not use native Read/Glob/Grep, run commands, fetch the web, or call non-enhance MCP/skills directly.';
 }
 
 export function log(root, event, config = null) {
