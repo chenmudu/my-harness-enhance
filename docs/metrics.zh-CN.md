@@ -10,7 +10,7 @@
 
 | 量 | 角色 | 状态 |
 | --- | --- | --- |
-| 注意力密度 | 主指标 | packet 占比已采集；payload 占比待补 |
+| 注意力密度 | 主指标 | packet 占比已采集；payload 占比已在 treatment 采集 |
 | `b`（每轮增长） | 预算 | 逐轮以 `context_usage_ratio` × 会话窗口采集 |
 | `M_T`（收尾主 context） | 窗口检查 | 仅模拟 |
 | `B`（累积输入） | 成本 | 未采集 |
@@ -102,10 +102,10 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 | `b`（每轮增长） | 逐轮采集 | `mhe ab` 里的 `context_usage_ratio` × 会话窗口 |
 | `B`（累积输入） | 未采集 | 需要逐轮 context 记账 |
 | `C`（实际计费） | 每次运行采集 | `mhe ab` 里 conductor 与 `subagents/agent-*.jsonl` 的 credits 之和 |
-| 构成 | 从 transcript 量出来 | assistant / 工具结果 / worker 结果 |
+| 构成 | 从 transcript 量出来 | assistant 文本 / thinking / 工具输入 / 工具结果 / worker 结果 |
 | envelope / capsule tokens | 已采集 | hook 遥测 |
 | 行为标签 | 每次运行采集 | `mhe ab` 写入的 `behavior_label` 行 |
-| 注意力密度 | packet 占比已采集；payload 占比另算 | `prompt_submitted` 的 packet/relevant/injected tokens |
+| 注意力密度 | packet 占比与 payload 占比均已采集 | `prompt_submitted` 的 packet/relevant/injected tokens 与逐轮 `context_tokens` |
 
 `density` = `relevant_tokens / packet_tokens`，
 其中 relevant 指除去 PARKED 与 MORE 之外的部分。
@@ -113,9 +113,10 @@ hooks 只向 `metrics.jsonl` 追加计数和体积，不记录 prompt、摘要�
 它不说明模型是否照此行动，那要靠行为标签。
 
 packet 占比只覆盖每轮的增量注入，而一次请求的 payload 是整段对话。
-两个数都要报：`density`（packet 构成）与注入 tokens 除以 `context_tokens`
-（payload 占比）。当 CLI 把 provider 的 usage 字段清零时，输入/输出拆分
-保持不可得；报告会直说不可得，而不是编一个数。
+A/B 报告两个数都打印：`density`（packet 构成）与当轮注入 tokens 除以
+`context_tokens`（payload 占比）。baseline 没有这一层，所以它的 payload
+占比是“不适用”，不是 0。当 CLI 把 provider 的 usage 字段清零时，
+输入/输出拆分保持不可得；报告会直说不可得，而不是编一个数。
 
 hook 看不到完整主 context，因此 `agent_result.compact_tokens` 是
 “本次进入主 context 的量”的最佳代理；
@@ -282,6 +283,8 @@ credits 同时跟着请求数和上下文走，不是单独跟某一个：
 1.25x 计费 credits 两个 gate 仍未过；这是委派结构的属性，
 不是 conductor 上下文大小；
 缩 conductor 上下文不会改变 worker 循环。
+这一层的 payload 占比为每轮 0.0079–0.0084，占最终 context 的 2.1–2.3%：
+packet 很密，但整段对话的大部分并不是这一层。
 
 ## 验收指标
 
