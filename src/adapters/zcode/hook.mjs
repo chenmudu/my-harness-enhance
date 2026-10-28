@@ -18,6 +18,7 @@
 // All emitted output is valid ZCode hook JSON.
 import { ensureState, loadConfig } from '../../core/config.mjs';
 import { conductorInjection, conductorTurnInjection, writeCapsule } from '../../core/capsule.mjs';
+import { handshakeReason, workerHandshake } from '../../core/handshake.mjs';
 import { extractText, invalidResultEnvelope, parseEnvelope } from '../../core/contract.mjs';
 import { byteLength } from '../../core/metrics.mjs';
 import { putArtifact } from '../../core/artifacts.mjs';
@@ -94,16 +95,20 @@ function contractGateReason() {
 function recordDispatchJob(root, config, toolInput, text, payload) {
   const worker = subagentOf(toolInput);
   const matched = text.match(DISPATCH_TASK_ID_RE);
+  const taskId = matched ? matched[1] : '';
+  const hashes = workerHandshake(root, { taskId });
   const sessionId = String(payload.session_id || payload.sessionId || '').trim();
   return upsertJob(root, newJobId('job'), {
     agent_id: '',
     type: worker,
     role: worker ? roleFor(config, worker) : 'worker',
-    task_id: matched ? matched[1] : '',
+    task_id: taskId,
     status: 'running',
     depth: 1,
     session_id: sessionId,
     recorded_by: 'zcode-pre-tool-use',
+    expected_brief_hash: hashes.brief_hash,
+    expected_task_hash: hashes.task_hash,
   });
 }
 
@@ -307,6 +312,26 @@ async function onPostToolUse(payload, root, config) {
     const existing = findRunningDispatchJob(root, worker, sessionId);
     const jobId = existing?.id || newJobId('agent');
     const invalid = parsed.ok ? null : invalidResultEnvelope(parsed.errors.join('; '), raw);
+    const live = workerHandshake(root, {
+      taskId: parsed.value?.task_id || existing?.task_id || '',
+    });
+    const previousMismatch = existing?.handshake === 'mismatch';
+    const handshake = parsed.ok && !previousMismatch
+      ? handshakeReason(existing, parsed.value, live)
+      : {
+        ok: false,
+        legacy: false,
+        reason: previousMismatch
+          ? (existing?.error || 'stale worker result')
+          : parsed.errors.join('; '),
+      };
+    const accepted = parsed.ok && handshake.ok;
+    if (accepted && handshake.legacy) {
+      parsed.value.warnings = [...(parsed.value.warnings || []), 'handshake missing: legacy result'];
+    }
+    const taskId = accepted
+      ? parsed.value.task_id
+      : (existing?.task_id || parsed.value?.task_id || '');
 
     upsertJob(root, jobId, {
       agent_id: existing?.agent_id || '',
@@ -314,24 +339,27 @@ async function onPostToolUse(payload, root, config) {
       role: existing?.role || (worker ? roleFor(config, worker) : 'worker'),
       depth: existing?.depth || 1,
       session_id: existing?.session_id ?? sessionId,
-      task_id: parsed.ok ? parsed.value.task_id : (existing?.task_id || ''),
-      status: parsed.ok ? parsed.value.status : 'invalid_result',
+      task_id: taskId,
+      status: accepted ? parsed.value.status : 'invalid_result',
       result_handle: artifact.handle,
       envelope: parsed.ok ? parsed.value : invalid,
-      error: parsed.ok ? '' : parsed.errors.join('; ').slice(0, 500),
-      retryable: !parsed.ok,
-      next: parsed.ok ? '' : (invalid?.next ?? ''),
+      error: accepted ? '' : (handshake.reason || parsed.errors.join('; ')).slice(0, 500),
+      handshake: accepted ? (handshake.legacy ? 'legacy' : 'ok') : (parsed.ok ? 'mismatch' : 'invalid'),
+      retryable: !accepted,
+      error_class: accepted ? '' : (parsed.ok ? 'stale_contract' : (existing?.error_class || 'invalid_result')),
+      next: accepted ? '' : (parsed.ok ? 'Re-dispatch from the current brief/task.' : (invalid?.next ?? '')),
       recorded_by: existing?.recorded_by || 'zcode-post-tool-use',
       finished_by: 'zcode-post-tool-use',
     });
-    if (parsed.ok) syncPlanFromEnvelope(root, parsed.value);
+    if (accepted) syncPlanFromEnvelope(root, parsed.value);
 
     log(root, {
       event: EVENT,
       role: 'conductor',
       tool,
-      valid: parsed.ok,
-      status: parsed.ok ? parsed.value.status : 'invalid_result',
+      valid: accepted,
+      handshake: accepted ? (handshake.legacy ? 'legacy' : 'ok') : (parsed.ok ? 'mismatch' : 'invalid'),
+      status: accepted ? parsed.value.status : 'invalid_result',
       artifact: artifact.handle,
       job_id: jobId,
       job_matched: Boolean(existing),

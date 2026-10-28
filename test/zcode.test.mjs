@@ -31,6 +31,7 @@ import { capabilitiesPath, loadConfig, saveConfig, stateDirFor } from '../src/co
 import { canonicalPath, enhanceHome, readRegistry } from '../src/core/state-root.mjs';
 import { resolveCapabilities } from '../src/core/capabilities.mjs';
 import { readArtifactIndex } from '../src/core/artifacts.mjs';
+import { workerHandshake } from '../src/core/handshake.mjs';
 import {
   initStore,
   readGoal,
@@ -1037,6 +1038,78 @@ test('contract gate records a synthetic running job; PostToolUse completes it', 
   assert.ok(jobs[0].result_handle);
   assert.ok(readArtifactIndex(root).artifacts[jobs[0].result_handle]);
   assert.equal(readPlan(root).tasks.find((task) => task.id === 'T1').status, 'in_progress');
+});
+
+test('ZCode accepts a matching handshake and syncs the plan', () => {
+  const root = setupHookRoot();
+  runHook(root, 'SessionStart', { session_id: 's-hs-ok', source: 'startup' });
+  writeBrief(root, { profile: 'general', checks: [] });
+  writePlan(root, [{ id: 'T1', title: 'scan', status: 'pending' }], { replace: true });
+  const hashes = workerHandshake(root, { taskId: 'T1' });
+  const pre = runHook(root, 'PreToolUse', {
+    session_id: 's-hs-ok',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore', prompt: `task_id: T1\n${CONTRACT}` },
+  });
+  assert.equal(pre.stdout.trim(), '');
+  const running = readJobs(root).jobs[0];
+  assert.equal(running.expected_brief_hash, hashes.brief_hash);
+  assert.equal(running.expected_task_hash, hashes.task_hash);
+
+  const done = runHook(root, 'PostToolUse', {
+    session_id: 's-hs-ok',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore' },
+    tool_response: JSON.stringify({
+      ...validEnvelope,
+      task_id: 'T1',
+      brief_hash: hashes.brief_hash,
+      task_hash: hashes.task_hash,
+      check_result: { ok: true, checker: 'docs', findings: 0 },
+    }),
+  });
+  assert.equal(done.stdout.trim(), '');
+  const job = readJobs(root).jobs.find((item) => item.id === running.id);
+  assert.equal(job.status, 'ok');
+  assert.equal(job.handshake, 'ok');
+  assert.equal(readPlan(root).tasks[0].status, 'in_progress');
+});
+
+test('ZCode rejects a result whose task contract changed after dispatch', () => {
+  const root = setupHookRoot();
+  runHook(root, 'SessionStart', { session_id: 's-hs-stale', source: 'startup' });
+  writeBrief(root, { profile: 'general', checks: [] });
+  writePlan(root, [{ id: 'T1', title: 'scan', status: 'pending', acceptance: 'old' }], { replace: true });
+  const hashes = workerHandshake(root, { taskId: 'T1' });
+  const pre = runHook(root, 'PreToolUse', {
+    session_id: 's-hs-stale',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore', prompt: `task_id: T1\n${CONTRACT}` },
+  });
+  assert.equal(pre.stdout.trim(), '');
+  const running = readJobs(root).jobs[0];
+  updatePlanTask(root, 'T1', { acceptance: 'new' });
+
+  const done = runHook(root, 'PostToolUse', {
+    session_id: 's-hs-stale',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore' },
+    tool_response: JSON.stringify({
+      ...validEnvelope,
+      task_id: 'T1',
+      brief_hash: hashes.brief_hash,
+      task_hash: hashes.task_hash,
+      check_result: { ok: true, checker: 'docs', findings: 0 },
+    }),
+  });
+  assert.equal(done.stdout.trim(), '');
+  const job = readJobs(root).jobs.find((item) => item.id === running.id);
+  assert.equal(job.status, 'invalid_result');
+  assert.equal(job.handshake, 'mismatch');
+  assert.equal(job.error_class, 'stale_contract');
+  assert.equal(job.retryable, true);
+  assert.match(job.error, /task changed after dispatch/);
+  assert.equal(readPlan(root).tasks[0].status, 'pending');
 });
 
 test('an invalid Agent result marks the matched job invalid_result and retryable', () => {

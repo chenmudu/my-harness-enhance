@@ -7,6 +7,7 @@ import {
 } from '../../../core/global.mjs';
 import { detectConfigDir, syncCapabilities } from '../install.mjs';
 import { conductorInjection, conductorTurnInjection, sessionCard, workerInjection, writeCapsule } from '../../../core/capsule.mjs';
+import { handshakeReason, workerHandshake } from '../../../core/handshake.mjs';
 import { nowReminder } from '../../../core/packet.mjs';
 import { failureVerdict } from '../../../core/errors.mjs';
 import {
@@ -114,16 +115,31 @@ function findPendingJob(root, { worker, session = '', sessionId = '' } = {}) {
 function recordPendingDispatch(root, config, toolInput, text, payload, session) {
   const worker = subagentOf(toolInput);
   const matched = text.match(DISPATCH_TASK_ID_RE);
+  const taskId = matched ? matched[1] : '';
+  const hashes = workerHandshake(root, { taskId, session });
   return upsertJob(root, newJobId('job'), {
     agent_id: '',
     type: worker,
     role: worker ? roleFor(config, worker) : 'worker',
-    task_id: matched ? matched[1] : '',
+    task_id: taskId,
     status: 'pending',
     depth: 1,
     session_id: sessionIdOf(payload),
     recorded_by: 'qoder-pre-tool-use',
+    expected_brief_hash: hashes.brief_hash,
+    expected_task_hash: hashes.task_hash,
   }, session);
+}
+
+/**
+ * PostToolUse carries no agent id on every harness build, so find the job the
+ * same way the dispatch was recorded: latest matching task + worker type.
+ */
+function findJobForEnvelope(root, { taskId = '', agentType = '', session = '' } = {}) {
+  const matches = (readJobs(root, session).jobs || []).filter((job) =>
+    (!taskId || String(job.task_id || '') === taskId)
+    && (!agentType || String(job.type || '') === agentType));
+  return matches[matches.length - 1] || null;
 }
 
 function landReminder(root, envelope, agentType = '', session = '') {
@@ -351,6 +367,12 @@ async function onSubagentStart(payload, root, config) {
   });
   const jobId = pending?.id || agentId || newJobId('job');
   const taskId = pending?.task_id || '';
+  const expected = pending
+    ? {
+      brief_hash: pending.expected_brief_hash || '',
+      task_hash: pending.expected_task_hash || '',
+    }
+    : workerHandshake(root, { taskId, session });
   const role = roleFor(config, agentType);
   upsertJob(root, jobId, {
     agent_id: agentId,
@@ -360,6 +382,8 @@ async function onSubagentStart(payload, root, config) {
     depth: 1,
     task_id: taskId,
     recorded_by: pending?.recorded_by || 'qoder-subagent-start',
+    expected_brief_hash: expected.brief_hash,
+    expected_task_hash: expected.task_hash,
   }, session);
 
   const injection = workerInjection(root, {
@@ -367,6 +391,8 @@ async function onSubagentStart(payload, root, config) {
     role,
     jobId,
     taskId,
+    briefHash: expected.brief_hash,
+    taskHash: expected.task_hash,
     session,
   });
   writeJson(hookJson('SubagentStart', { additionalContext: injection }));
@@ -418,34 +444,62 @@ async function onSubagentStop(payload, root, config) {
   const envelope = parsed.ok
     ? stampWorkerProvenance(root, parsed.value)
     : invalid;
+  const live = workerHandshake(root, {
+    taskId: parsed.value?.task_id || existing?.task_id || '',
+    session,
+  });
+  const previousMismatch = existing?.handshake === 'mismatch';
+  const handshake = parsed.ok && !previousMismatch
+    ? handshakeReason(existing, parsed.value, live)
+    : {
+      ok: false,
+      legacy: false,
+      reason: previousMismatch
+        ? (existing?.error || 'stale worker result')
+        : parsed.errors.join('; '),
+    };
+  const accepted = parsed.ok && handshake.ok;
+  if (accepted && handshake.legacy) {
+    envelope.warnings = [...(envelope.warnings || []), 'handshake missing: legacy result'];
+  }
+  const failure = accepted
+    ? null
+    : (parsed.ok
+      ? { retryable: true, error_class: 'stale_contract', dead_letter: false }
+      : verdictFor(root, {
+        agentType,
+        taskId: parsed.value?.task_id || existing?.task_id || '',
+        error: parsed.errors.join('; '),
+        session,
+      }));
+  const taskId = accepted
+    ? parsed.value.task_id
+    : (existing?.task_id || parsed.value?.task_id || '');
 
   upsertJob(root, jobId, {
     agent_id: agentId,
     type: agentType,
     role: existing?.role || roleFor(config, agentType),
     depth: existing?.depth || 1,
-    task_id: parsed.ok ? parsed.value.task_id : '',
-    status: parsed.ok ? parsed.value.status : 'invalid_result',
+    task_id: taskId,
+    status: accepted ? parsed.value.status : 'invalid_result',
     result_handle: artifact.handle,
     envelope,
-    error: parsed.ok ? '' : parsed.errors.join('; ').slice(0, 500),
-    ...(parsed.ok ? { retryable: false, error_class: '', dead_letter: false } : verdictFor(root, {
-      agentType,
-      taskId: parsed.value?.task_id || existing?.task_id || '',
-      error: parsed.errors.join('; '),
-      session,
-    })),
-    next: parsed.ok ? '' : invalid.next,
+    error: accepted ? '' : (handshake.reason || parsed.errors.join('; ')).slice(0, 500),
+    handshake: accepted ? (handshake.legacy ? 'legacy' : 'ok') : (parsed.ok ? 'mismatch' : 'invalid'),
+    ...(failure || { retryable: false, error_class: '', dead_letter: false }),
+    next: accepted ? '' : (parsed.ok ? 'Re-dispatch from the current brief/task.' : invalid.next),
   }, session);
-  if (parsed.ok) syncPlanFromEnvelope(root, parsed.value, session);
+  if (accepted) syncPlanFromEnvelope(root, parsed.value, session);
 
   log(root, {
     event: EVENT,
     role: 'worker',
     agent_type: agentType,
     job_id: jobId,
-    valid: parsed.ok,
-    status: parsed.ok ? parsed.value.status : 'invalid_result',
+    valid: accepted,
+    handshake: accepted ? (handshake.legacy ? 'legacy' : 'ok') : (parsed.ok ? 'mismatch' : 'invalid'),
+    status: accepted ? parsed.value.status : 'invalid_result',
     result_handle: artifact.handle,
   }, config);
   recordMetric(root, {
@@ -453,9 +507,10 @@ async function onSubagentStop(payload, root, config) {
     role: 'worker',
     agent_type: agentType,
     job_id: jobId,
-    valid: parsed.ok,
-    status: parsed.ok ? parsed.value.status : 'invalid_result',
-    retryable: !parsed.ok,
+    valid: accepted,
+    handshake: accepted ? (handshake.legacy ? 'legacy' : 'ok') : (parsed.ok ? 'mismatch' : 'invalid'),
+    status: accepted ? parsed.value.status : 'invalid_result',
+    retryable: !accepted,
     result_chars: raw.length,
     result_tokens: estimateTokens(raw),
   }, session);
@@ -494,6 +549,69 @@ async function onPostToolUse(payload, root, config) {
         || input.name
         || '',
       );
+      const job = findJobForEnvelope(root, {
+        taskId: parsed.value.task_id,
+        agentType: dispatchedAgent,
+        session,
+      });
+      const live = workerHandshake(root, {
+        taskId: parsed.value.task_id || job?.task_id || '',
+        session,
+      });
+      const previousMismatch = job?.handshake === 'mismatch';
+      const handshake = previousMismatch
+        ? { ok: false, legacy: false, reason: job.error || 'stale worker result' }
+        : handshakeReason(job, parsed.value, live);
+      if (!handshake.ok) {
+        const invalid = invalidResultEnvelope(`stale worker result: ${handshake.reason}`, raw);
+        invalid.next = 'Re-dispatch from the current brief/task.';
+        invalid.data = {
+          ...(invalid.data || {}),
+          handshake_mismatch: true,
+          task_id: parsed.value.task_id,
+          artifact_handle: artifact.handle,
+        };
+        const compactInvalid = JSON.stringify(invalid);
+        writeJson(hookJson('PostToolUse', {
+          updatedToolOutput: compactInvalid,
+        }));
+        if (job) {
+          upsertJob(root, job.id, {
+            status: 'invalid_result',
+            error: handshake.reason.slice(0, 500),
+            error_class: 'stale_contract',
+            retryable: true,
+            handshake: 'mismatch',
+            next: invalid.next,
+          }, session);
+        }
+        log(root, {
+          event: EVENT,
+          role: 'conductor',
+          tool,
+          valid: false,
+          handshake: 'mismatch',
+          status: 'invalid_result',
+          artifact: artifact.handle,
+          error: handshake.reason.slice(0, 300),
+        }, config);
+        recordMetric(root, {
+          event: 'agent_result',
+          role: 'conductor',
+          tool,
+          valid: false,
+          handshake: 'mismatch',
+          status: 'invalid_result',
+          result_chars: raw.length,
+          result_tokens: estimateTokens(raw),
+          compact_chars: compactInvalid.length,
+          compact_tokens: estimateTokens(compactInvalid),
+        }, session);
+        return;
+      }
+      if (handshake.legacy) {
+        parsed.value.warnings = [...(parsed.value.warnings || []), 'handshake missing: legacy result'];
+      }
       const reminder = landReminder(root, parsed.value, dispatchedAgent, session);
       if (reminder) {
         parsed.value.next = [parsed.value.next, reminder].filter(Boolean).join(' ');
@@ -501,6 +619,11 @@ async function onPostToolUse(payload, root, config) {
       }
       const compact = compactEnvelope(parsed.value, config.envelope.maxTotalChars);
       syncPlanFromEnvelope(root, parsed.value, session);
+      if (job) {
+        upsertJob(root, job.id, {
+          handshake: handshake.legacy ? 'legacy' : 'ok',
+        }, session);
+      }
       // The frontier usually moved because this worker finished. Say where the
       // conductor is now instead of letting it re-derive the next step.
       const now = nowReminder(root, { session });

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { loadConfig } from '../core/config.mjs';
 import { resolveProject } from '../core/state-root.mjs';
 import { buildCapsule, taskCard, workerContract } from '../core/capsule.mjs';
+import { workerHandshake } from '../core/handshake.mjs';
 import { buildBrief } from '../core/brief.mjs';
 import { runBriefChecks, validateBriefChecks } from '../core/checks.mjs';
 import { getArtifact, searchArtifacts, isHandle } from '../core/artifacts.mjs';
@@ -708,10 +709,13 @@ function toolEnhanceCapabilities(args = {}) {
 function toolEnhanceWorkerContract(args = {}) {
   const { root, session } = contextFor(args, { tolerateAmbiguity: true });
   const taskId = String(args.task_id || '');
+  const hashes = workerHandshake(root, { taskId, session });
   const contract = workerContract(String(args.agent_type || 'worker'), {
     role: String(args.role || ''),
     jobId: String(args.job_id || ''),
     taskId,
+    briefHash: hashes.brief_hash,
+    taskHash: hashes.task_hash,
   });
   const card = taskCard(root, { taskId, session, maxChars: 1200 });
   return textResult([contract, card].filter(Boolean).join('\n\n'));
