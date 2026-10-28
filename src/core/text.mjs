@@ -15,10 +15,10 @@ export function clipText(value, maxChars, suffix = '…[truncated]') {
 }
 
 /** Hard budget on an estimated-token count; the marker is counted too. */
-export function fitToTokens(text, maxTokens, estimate) {
+export function fitToTokens(text, maxTokens, estimate, marker = '\n…[capsule truncated]') {
   if (maxTokens <= 0) return '';
   if (estimate(text) <= maxTokens) return text;
-  const suffix = '\n…[capsule truncated]';
+  const suffix = marker;
   const room = maxTokens - estimate(suffix);
   if (room <= 0) return suffix.trim();
   let low = 0;

@@ -70,6 +70,10 @@ test('MCP server initializes and lists enhance tools', () => {
   const planTool = list.result.tools.find((tool) => tool.name === 'enhance_plan');
   assert.deepEqual(planTool.inputSchema.properties.tasks.items.required, ['id']);
   assert.ok(planTool.inputSchema.properties.tasks.items.properties.task);
+  assert.equal(planTool.inputSchema.properties.tasks.items.properties.checks.type, 'array');
+  assert.equal(planTool.inputSchema.properties.tasks.items.properties.outputs.type, 'array');
+  const contractTool = list.result.tools.find((tool) => tool.name === 'enhance_worker_contract');
+  assert.ok(contractTool.inputSchema.properties.task_id);
   const decideTool = list.result.tools.find((tool) => tool.name === 'enhance_decide');
   assert.ok(decideTool.inputSchema.properties.session);
 });
@@ -213,6 +217,48 @@ test('MCP enhance_plan acknowledges a write instead of echoing the plan', () => 
   const writeChars = responses.find((item) => item.id === 2).result.content[0].text.length;
   const readChars = responses.find((item) => item.id === 3).result.content[0].text.length;
   assert.ok(writeChars * 4 < readChars, `write ${writeChars} vs read ${readChars}`);
+});
+
+test('MCP worker contract carries the task card when task_id is given', () => {
+  const root = makeRoot();
+  const responses = runRpc(root, [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'enhance_plan',
+        arguments: {
+          tasks: [{
+            id: 't1',
+            title: 'ship it',
+            acceptance: 'tests pass',
+            checks: ['command:test'],
+            outputs: ['out.txt'],
+          }],
+          replace: true,
+        },
+      },
+    },
+    {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'enhance_worker_contract',
+        arguments: { agent_type: 'general-purpose', task_id: 't1' },
+      },
+    },
+  ]);
+  const contract = responses.find((item) => item.id === 3).result.content[0].text;
+  assert.match(contract, /MY-HARNESS-ENHANCE WORKER CONTRACT/);
+  assert.match(contract, /task_id: t1/);
+  assert.match(contract, /\[TASK CARD\]/);
+  assert.match(contract, /title: ship it/);
+  assert.match(contract, /acceptance: tests pass/);
+  assert.match(contract, /checks: command:test/);
+  assert.match(contract, /out\.txt/);
 });
 
 test('MCP capabilities include process diagnostics', () => {
