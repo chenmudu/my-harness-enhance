@@ -60,14 +60,15 @@ token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.
   `reason` 使用只读 Explore 兼容模式，worker contract 强制内嵌，
   synthetic job 补偿 SubagentStop。
   原生仍没有 result rewrite/SubagentStop/PreCompact。
-- **机制已验证；主指标还没有实现。**
-  packet 级注意力密度与行为标签（下一步动作、做错任务、重读、恢复）
-  已逐轮采集，且重读已经消除；但 CLI 的 `context_usage_ratio`
-  依赖会话级分母，跨 arm 比值的 A/B 还没有闭合，
-  需要一次同窗口的复测才能定论。
+- **机制已验证；主指标现在有两个数。**
+  packet 密度、payload 占比与行为标签都已逐轮采集；
+  A/B 把两个 arm 固定在同一窗口，因此 context tokens 可比；
+  payload 占比只有 treatment 有，baseline 没有这一层，
+  它衡量的是这一层在整段对话里的份额，不是 packet 本身。
 - **什么时候划算。** 目前还不划算。只算 conductor 时，3 轮的 500 行与 2,000 行
   输入是 baseline 的 1.7 倍和 1.4 倍，15 轮是 0.83 倍；把 worker 的 transcript
-  加回来，已测的每个形状都变成亏损（2.91x、2.22x、2.49x、1.43x）。
+  加回来，已测的每个形状都变成亏损（2.91x、2.22x、2.49x、1.43x，
+  task card 策略下 1.74x）。
   省下来的确实是"留在 conductor 里的内容"，但还覆盖不了 worker 成本。
   数字与前提见 [docs/metrics.zh-CN.md](docs/metrics.zh-CN.md)。
 - 待验证：不重启 CLI 的 wall-clock 对比、并发代码集成冲突、

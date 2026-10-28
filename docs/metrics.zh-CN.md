@@ -291,7 +291,7 @@ packet 很密，但整段对话的大部分并不是这一层。
 | 指标 | 证明了什么 | 目标 |
 |---|---|---|
 | 注意力密度 | conductor 看到的是当前决策需要的 | 逐轮 packet 占比 + payload 占比；每次运行有行为标签 |
-| 主 context 增长（`b`） | 执行细节留在主 context 之外 | 同一任务形状下低于 baseline；尚未证明 |
+| 主 context 增长（`b`） | 执行细节留在主 context 之外 | 同一任务形状下低于 baseline；`n3-carded-01` 为 38.0k 对 79.8k（−52%） |
 | 工具 schema 占比 | conductor 的工具面很小 | 主 context 的 <25% |
 | 非法 envelope 泄漏率 | contract 约束生效 | 主 context 中 0 个原始非法 blob |
 | goal 保持 | conductor 守住了 goal | 压缩（compaction）后能正确复述 |

@@ -60,15 +60,16 @@ everything in one long session.
   Explore compatibility, worker contract is mandatory, and synthetic jobs stand in
   for SubagentStop. Raw result rewrite/SubagentStop/PreCompact are still native
   absences.
-- **The mechanism is validated; the primary metric is not.** Packet-level
-  attention density and behavior labels (next action, wrong task, re-read,
-  recovery) are collected per turn, but the CLI's `context_usage_ratio` turned
-  out to depend on a per-session denominator, so the ratio A/B is still open.
+- **The mechanism is validated; the primary metric now has both numbers.**
+  Packet density, payload share, and behavior labels are collected per turn;
+  the A/B pins both arms to one window, so context tokens are comparable.
+  Payload share is treatment-only, because the baseline has no layer.
 - **Where it pays.** Not yet. Counting only the conductor, three turns cost 1.7x
   and 1.4x the baseline at 500 and 2,000-line inputs, and fifteen turns 0.83x;
   adding the worker transcripts makes every measured shape a loss (2.91x, 2.22x,
-  2.49x, 1.43x). The saving comes from what stays in the conductor, but it does
-  not yet cover the worker cost. Numbers and caveats: [docs/metrics.md](docs/metrics.md).
+  2.49x, 1.43x, and 1.74x under the task-card policy). The saving comes from
+  what stays in the conductor, but it does not yet cover the worker cost.
+  Numbers and caveats: [docs/metrics.md](docs/metrics.md).
 - Still to validate: a wall-clock comparison that does not restart the CLI every
   turn, concurrent code integration conflicts, long-running compaction, and
   Codex/DSH adapters.
