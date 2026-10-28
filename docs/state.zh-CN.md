@@ -207,13 +207,13 @@ sequenceDiagram
 7. conductor 跑确定性检查（`enhance_check`）或对代码执行 `land`。只有那个结果能完成任务。
 8. conductor 在决策需要跨会话保留时记录 decision；下一个 prompt 从第 1 步开始，只带 delta anchor。
 
-当前 policy 禁止做仓库工作，所以第 2 步一定是委派；把小项合并成一个 task 是允许的，但直接做不允许。待定的决策是要不要加入“直接做还是委派”的规则；见下面的 D-1。
+当前 policy 允许通过 `enhance_recall` 做一次有界 inline 读取；native `Read`/`Glob`/`Grep`、写入和 shell 仍然委派。Inline 是一次有界读取加短回答；任何写入、多文件、测试/land 或其他工具都交给 worker；同 owner、同 checks、同上下文的小项合并成一个 task。见下面的 D-1。
 
 ## 5. 当前限制
 
 | ID | 限制 | 影响 | 预期修法 |
 |---|---|---|---|
-| D-1 | conductor policy 禁止做仓库工作，哪怕很小的读取也变成 worker 派工 | 收费 worker 让成本翻倍；免费 worker 增加墙钟和信封 | 按工件大小、复用和隔离需求，加入“直接做 / 委派 / 合并”的决策规则 |
+| D-1 | native `Read` 仍被拒绝；inline 读取必须走 `enhance_recall`（8,000 字符上限） | 大文件不能 inline 读取；conductor 必须委派或缩小查询 | 保持 inline 路径有界；没有路径/大小门禁前不开放 native Read |
 | D-2 | `SubagentStart` 没有传 `task_id`，注入的 contract 写的是 `task_id: unassigned` | job 与 plan 的关联依赖 conductor 的 prompt 和 envelope | 从派工文本解析 `task_id`，并注入结构化 task card |
 | D-3 | `fit(contract + goal + brief, 900)` 从尾部截断 | goal 一长就可能切掉 brief 和 checks；worker 看不到验收标准 | 给每个 section 分预算，并显式标记截断 |
 | D-4 | 回合 anchor 说不要调用 `enhance_state`，即使 packet 是 compact | conductor 无法补取 packet 省略的 section | packet mode 不是 `full` 时允许一次 state 调用 |
