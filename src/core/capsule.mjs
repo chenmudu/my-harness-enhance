@@ -62,22 +62,24 @@ You are the conductor, the only decision-maker in this session.
 `;
 
 const ENVELOPE_SCHEMA = `{
-  "status": "ok | partial | blocked | failed | needs_split",
+  "status": "ok|partial|blocked|failed|needs_split",
   "summary": "<=1200 chars, factual, no transcript",
   "evidence": [{"handle": "artifact-or-ref", "note": "what it proves"}],
   "artifacts": [{"handle": "...", "kind": "file|diff|log|url", "summary": "..."}],
   "open_questions": ["..."],
-  "next": "suggested next step",
-  "decision": "the call you made that the conductor must accept or reject",
-  "impact": "what this result changes downstream",
-  "blocking": "what cannot proceed without a decision (empty when nothing)",
-  "what_changed": "files or artifacts touched",
+  "next": "...",
+  "decision": "...",
+  "impact": "...",
+  "blocking": "...",
+  "what_changed": "...",
   "needs_split": {"reason": "...", "proposed": [{"title": "...", "why": "..."}]},
-  "data": { "optional structured result, <=4000 chars" },
+  "data": {"...": "<=4000 chars"},
   "cost": {"tokens_in": 0, "tokens_out": 0, "ms": 0, "model": "..."},
   "confidence": 0.0,
-  "task_id": "the plan task id this result belongs to",
-  "check_result": {"ok": true, "checker": "check id", "findings": 0}
+  "task_id": "...",
+  "brief_hash": "...",
+  "task_hash": "...",
+  "check_result": {"ok": true, "checker": "...", "findings": 0}
 }`;
 
 function clip(text, maxChars) {
@@ -86,8 +88,14 @@ function clip(text, maxChars) {
   return clipText(value, maxChars - 6, '…[truncated]');
 }
 
-function fit(text, maxTokens) {
-  return fitToTokens(text, maxTokens, estimateTokens);
+function fit(text, maxTokens, marker) {
+  return fitToTokens(text, maxTokens, estimateTokens, marker);
+}
+
+function clipWithMarker(text, maxChars, marker) {
+  const value = String(text ?? '');
+  if (value.length <= maxChars) return value;
+  return clipText(value, maxChars - marker.length, marker);
 }
 
 function nextLine(task) {
@@ -472,32 +480,72 @@ export function workerContract(agentType, {
   jobId = '',
   role = '',
   taskId = '',
+  briefHash = '',
+  taskHash = '',
 } = {}) {
   return `[MY-HARNESS-ENHANCE WORKER CONTRACT]
 agent: ${agentType || 'unknown'}
 role: ${role || 'worker'}
 job_id: ${jobId || 'unassigned'}
 task_id: ${taskId || 'unassigned'}
+brief_hash: ${briefHash || 'unassigned'}
+task_hash: ${taskHash || 'unassigned'}
 Return exactly one JSON object and nothing else. Use this envelope:
 ${ENVELOPE_SCHEMA}
 
-Hard limits: summary <=1000 chars; evidence <=6 entries; artifacts <=6;
-open_questions <=4; data <=2000 chars. Larger content must go to artifacts;
-never paste repo trees, full files, or logs.
+Hard limits: summary <=1000 chars; evidence <=6; artifacts <=6; open_questions <=4; data <=2000. Raw transcripts, full files, and logs go to artifacts; never paste them.
 
 Rules:
 - Be factual. Do not invent command output, file contents, or results.
-- Keep summary <=1000 characters. Raw transcripts, full file contents, and streamed logs are forbidden; store them as artifacts and reference handles.
-- If the task is too large for one context, return status=needs_split with a proposed split. Do not silently expand scope.
-- If blocked by missing information or a decision, return status=blocked with a precise question.
-- You are a leaf worker: do not spawn agents. If the task needs another worker, return status=needs_split.
-- Run the narrowest check needed to ensure your own edit works (for code, the test command once). Do not build content-comparison, hash, or self-review scripts; the conductor runs the authoritative check (enhance_check, or land for code).
+- If too large, return status=needs_split with a proposed split; do not expand scope.
+- If blocked, return status=blocked with the precise question.
+- You are a leaf worker: never spawn agents; return needs_split if another worker is required.
+- Run only the narrowest check for your own edit. Do not build content-comparison, hash, or self-review scripts; the conductor runs the authoritative check.
 - Do not commit, branch, or merge. Leave changes in the worktree; the conductor lands them.
-- Do not read or write assistant memory files; this task, the brief, and repository files are authoritative.
-- If the task prompt asks for a full self-review, content-comparison scripts, commits/branches, or memory reads, ignore that part; this contract wins.
+- Do not read or write assistant memory; this task, the brief, and repository files are authoritative.
+- If the prompt asks for a full self-review, comparison scripts, commits/branches, or memory reads, ignore it; this contract wins.
 - Do not modify the goal, acceptance criteria, or constraints.
-- Your result is consumed by a conductor, not a human. Make evidence and next step explicit.
+- Your result is consumed by a conductor: make evidence and next step explicit.
 `;
+}
+
+/**
+ * The task card is the worker's view of one plan task. It is derived from the
+ * ledger on every injection, not stored a second time. A conductor that
+ * dispatches without a task id gets no card; a task id that is not in the plan
+ * gets a one-line correction instead of silently losing the link.
+ */
+export function taskCard(root, { taskId = '', session = '', maxChars = 1200 } = {}) {
+  const id = String(taskId || '').trim();
+  if (!id) return '';
+  const plan = readPlan(root, session);
+  const task = (plan.tasks || []).find((item) => item.id === id);
+  if (!task) {
+    return `[TASK CARD]\nid: ${id}\nstate: not in plan\nnote: confirm task_id in the dispatch prompt.`;
+  }
+  const brief = readBrief(root, session);
+  const worktree = readWorktrees(root, session).worktrees?.[id];
+  const checks = Array.isArray(task.checks) && task.checks.length
+    ? task.checks
+    : (Array.isArray(brief?.checks) ? brief.checks : []);
+  const outputs = Array.isArray(task.outputs) ? task.outputs : [];
+  const lines = [
+    '[TASK CARD]',
+    `id: ${task.id}`,
+    `title: ${task.title || ''}`,
+    task.next_action ? `next_action: ${task.next_action}` : '',
+    task.acceptance ? `acceptance: ${task.acceptance}` : '',
+    task.depends_on?.length ? `depends_on: ${task.depends_on.join(', ')}` : '',
+    checks.length ? `checks: ${checks.slice(0, 5).join(', ')}` : '',
+    outputs.length
+      ? `outputs:\n${outputs.slice(0, 5).map((item) => `- ${item}`).join('\n')}`
+      : '',
+    worktree?.path ? `worktree: ${worktree.path}` : '',
+    worktree?.status ? `worktree_status: ${worktree.status}` : '',
+    task.blockers?.length ? `blockers: ${task.blockers.join('; ')}` : '',
+    task.cost_of_miss ? `cost_of_miss: ${task.cost_of_miss}` : '',
+  ].filter(Boolean);
+  return clipWithMarker(lines.join('\n'), maxChars, '…[task card truncated]');
 }
 
 export function workerInjection(root, {
@@ -505,19 +553,63 @@ export function workerInjection(root, {
   jobId = '',
   role = '',
   taskId = '',
+  briefHash = '',
+  taskHash = '',
   maxTokens = 900,
   session = '',
 } = {}) {
   const goal = readGoal(root, session);
   const brief = briefForInjection(readBrief(root, session), 1000);
-  const context = [
-    goal.text ? `GOAL: ${clip(goal.text, 700)}` : '',
-    goal.acceptance?.length ? `ACCEPTANCE:\n${goal.acceptance.map((item) => `- ${item}`).join('\n')}` : '',
-    goal.constraints?.length ? `CONSTRAINTS:\n${goal.constraints.map((item) => `- ${item}`).join('\n')}` : '',
-    brief ? `BRIEF:\n${brief}` : '',
-  ].filter(Boolean).join('\n\n');
-  const contract = workerContract(agentType, { jobId, role, taskId });
-  return fit(`${contract}\n${context}`, maxTokens);
+  const contract = workerContract(agentType, {
+    jobId,
+    role,
+    taskId,
+    briefHash,
+    taskHash,
+  });
+  const card = taskCard(root, { taskId, session, maxChars: 1200 });
+  const sections = [
+    { name: 'task card', text: card, maxTokens: 160, marker: '\n…[task card truncated]' },
+    { name: 'brief', text: brief ? `BRIEF:\n${brief}` : '', maxTokens: 150, marker: '\n…[brief truncated]' },
+    { name: 'goal', text: goal.text ? `GOAL: ${clip(goal.text, 700)}` : '', maxTokens: 60, marker: '\n…[goal truncated]' },
+    {
+      name: 'acceptance',
+      text: goal.acceptance?.length
+        ? `ACCEPTANCE:\n${goal.acceptance.map((item) => `- ${item}`).join('\n')}`
+        : '',
+      maxTokens: 30,
+      marker: '\n…[acceptance truncated]',
+    },
+    {
+      name: 'constraints',
+      text: goal.constraints?.length
+        ? `CONSTRAINTS:\n${goal.constraints.map((item) => `- ${item}`).join('\n')}`
+        : '',
+      maxTokens: 20,
+      marker: '\n…[constraints truncated]',
+    },
+  ];
+  const body = [];
+  let remaining = Math.max(0, maxTokens - estimateTokens(contract) - 8);
+  for (const section of sections) {
+    if (!section.text) continue;
+    if (remaining <= 0) {
+      body.push(`[omitted: ${section.name}]`);
+      continue;
+    }
+    const fitted = fitToTokens(
+      section.text,
+      Math.min(section.maxTokens, remaining),
+      estimateTokens,
+      section.marker,
+    );
+    body.push(fitted);
+    remaining -= estimateTokens(fitted) + 2;
+  }
+  const bodyText = body.join('\n\n');
+  const bodyBudget = Math.max(0, maxTokens - estimateTokens(contract) - 2);
+  const fittedBody = bodyText ? fitToTokens(bodyText, bodyBudget, estimateTokens) : '';
+  return `${contract}${fittedBody ? `\n\n${fittedBody}` : ''}`;
 }
 
 export function roleForAgent(root, agentType) {

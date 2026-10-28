@@ -288,6 +288,27 @@ test('attention values are bounded and unknown fields survive a write', () => {
   assert.equal(task.custom_field, 'kept');
 });
 
+test('plan tasks carry bounded checks and outputs', () => {
+  const root = tmpRoot();
+  initStore(root);
+  writePlan(root, [{
+    id: 't1',
+    title: 'ship it',
+    checks: Array.from({ length: 8 }, (_, index) => `check ${index} ${'c'.repeat(200)}`),
+    outputs: Array.from({ length: 12 }, (_, index) => `out ${index} ${'o'.repeat(240)}`),
+  }], { replace: true });
+  const task = readPlan(root).tasks[0];
+  assert.equal(task.checks.length, 5);
+  assert.ok(task.checks[0].length <= 160);
+  assert.equal(task.outputs.length, 10);
+  assert.ok(task.outputs[0].length <= 200);
+
+  updatePlanTask(root, 't1', { checks: ['command:test'] });
+  const updated = readPlan(root).tasks[0];
+  assert.deepEqual(updated.checks, ['command:test']);
+  assert.equal(updated.outputs.length, 10);
+});
+
 test('a legacy plan without metadata migrates on read', () => {
   const root = tmpRoot();
   initStore(root);

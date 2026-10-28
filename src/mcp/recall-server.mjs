@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from '../core/config.mjs';
 import { resolveProject } from '../core/state-root.mjs';
-import { buildCapsule, workerContract } from '../core/capsule.mjs';
+import { buildCapsule, taskCard, workerContract } from '../core/capsule.mjs';
 import { buildBrief } from '../core/brief.mjs';
 import { runBriefChecks, validateBriefChecks } from '../core/checks.mjs';
 import { getArtifact, searchArtifacts, isHandle } from '../core/artifacts.mjs';
@@ -181,6 +181,8 @@ const TOOLS = [
               worker: { type: 'string' },
               depends_on: { type: 'array', items: { type: 'string' } },
               acceptance: { type: 'string' },
+              checks: { type: 'array', items: { type: 'string' }, description: 'Task-specific checks; defaults to the brief checks (<=5).' },
+              outputs: { type: 'array', items: { type: 'string' }, description: 'Exact files or paths the worker must produce (<=10).' },
               next_action: { type: 'string', description: 'The single next action for this task (<=200 chars).' },
               blockers: { type: 'array', items: { type: 'string' }, description: 'Why this task cannot proceed (<=5 entries).' },
               priority: { type: 'integer', description: '1 (do first) to 9 (do last); default 3.' },
@@ -326,6 +328,7 @@ const TOOLS = [
         agent_type: { type: 'string' },
         role: { type: 'string' },
         job_id: { type: 'string' },
+        task_id: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -703,12 +706,15 @@ function toolEnhanceCapabilities(args = {}) {
 }
 
 function toolEnhanceWorkerContract(args = {}) {
-  contextFor(args, { tolerateAmbiguity: true });
+  const { root, session } = contextFor(args, { tolerateAmbiguity: true });
+  const taskId = String(args.task_id || '');
   const contract = workerContract(String(args.agent_type || 'worker'), {
     role: String(args.role || ''),
     jobId: String(args.job_id || ''),
+    taskId,
   });
-  return textResult(contract);
+  const card = taskCard(root, { taskId, session, maxChars: 1200 });
+  return textResult([contract, card].filter(Boolean).join('\n\n'));
 }
 
 const HANDLERS = {

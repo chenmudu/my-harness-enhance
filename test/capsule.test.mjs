@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/core/config.mjs';
-import { CONDUCTOR_POLICY, buildCapsule, conductorInjection, conductorTurnInjection, sessionCard, workerContract } from '../src/core/capsule.mjs';
+import { CONDUCTOR_POLICY, buildCapsule, conductorInjection, conductorTurnInjection, sessionCard, taskCard, workerContract, workerInjection } from '../src/core/capsule.mjs';
 import { buildPacket } from '../src/core/packet.mjs';
 import { estimateTokens } from '../src/core/metrics.mjs';
 import {
@@ -14,6 +14,7 @@ import {
   writeGoal,
   writeLastCheck,
   writePlan,
+  upsertWorktree,
 } from '../src/core/store.mjs';
 
 process.env.MY_HARNESS_ENHANCE_HOME = fs.mkdtempSync(
@@ -99,6 +100,94 @@ test('capsule locks the PROJECT path and the policy covers it plus misconfigured
   const contract = workerContract('general-purpose');
   assert.match(contract, /Do not build content-comparison, hash, or self-review scripts/);
   assert.doesNotMatch(contract, /verify|verification|parity|recheck|复核|校对|验收/i);
+});
+
+test('a task card derives the worker view from the plan, brief, and worktree', () => {
+  const root = makeRoot();
+  writeBrief(root, { profile: 'code', checks: ['brief-check'] });
+  writePlan(root, [
+    {
+      id: 't1',
+      title: 'ship it',
+      status: 'pending',
+      next_action: 'open the file',
+      acceptance: 'tests pass',
+      checks: ['task-check'],
+      outputs: ['out.txt', 'test/out.test.mjs'],
+    },
+    { id: 't2', title: 'fallback checks', status: 'pending' },
+  ], { replace: true });
+  upsertWorktree(root, 't1', { path: 'C:/tmp/mhe-wt-t1', status: 'active' });
+
+  const card = taskCard(root, { taskId: 't1' });
+  assert.match(card, /\[TASK CARD\]/);
+  assert.match(card, /id: t1/);
+  assert.match(card, /title: ship it/);
+  assert.match(card, /next_action: open the file/);
+  assert.match(card, /acceptance: tests pass/);
+  assert.match(card, /checks: task-check/);
+  assert.doesNotMatch(card, /brief-check/);
+  assert.match(card, /outputs:/);
+  assert.match(card, /out\.txt/);
+  assert.match(card, /worktree: C:\/tmp\/mhe-wt-t1/);
+  assert.match(card, /worktree_status: active/);
+
+  const fallback = taskCard(root, { taskId: 't2' });
+  assert.match(fallback, /checks: brief-check/);
+  assert.equal(taskCard(root, { taskId: '' }), '');
+  assert.match(taskCard(root, { taskId: 'missing' }), /not in plan/);
+});
+
+test('worker injection pins the contract and budgets every section', () => {
+  const root = makeRoot();
+  writeBrief(root, { profile: 'code', checks: ['command:test'] });
+  writePlan(root, [{
+    id: 't1',
+    title: 'ship it',
+    acceptance: 'tests pass',
+    checks: ['command:test'],
+    outputs: ['out.txt'],
+  }], { replace: true });
+
+  const contract = workerContract('general-purpose', { jobId: 'job-1', taskId: 't1' });
+  const injection = workerInjection(root, {
+    agentType: 'general-purpose',
+    jobId: 'job-1',
+    taskId: 't1',
+  });
+  assert.ok(injection.startsWith(contract));
+  assert.match(injection, /\[TASK CARD\]/);
+  assert.match(injection, /BRIEF:/);
+  assert.match(injection, /GOAL: Ship the endpoint/);
+  assert.match(injection, /brief_hash: unassigned/);
+  assert.match(injection, /task_hash: unassigned/);
+  assert.ok(estimateTokens(injection) <= 900, `tokens=${estimateTokens(injection)}`);
+
+  writeGoal(root, {
+    text: 'G'.repeat(3000),
+    acceptance: ['A'.repeat(500)],
+    constraints: ['C'.repeat(500)],
+    replace: true,
+  });
+  writeBrief(root, { profile: 'code', checks: ['command:test'], notes: 'N'.repeat(3000) });
+  writePlan(root, [{
+    id: 't1',
+    title: 'T'.repeat(300),
+    acceptance: 'A'.repeat(500),
+    checks: ['command:test'],
+    outputs: ['O'.repeat(500)],
+  }], { replace: true });
+  const long = workerInjection(root, {
+    agentType: 'general-purpose',
+    jobId: 'job-1',
+    taskId: 't1',
+  });
+  assert.ok(estimateTokens(long) <= 900, `tokens=${estimateTokens(long)}`);
+  assert.match(long, /task card truncated/);
+  assert.match(long, /brief truncated/);
+  assert.match(long, /goal truncated/);
+  assert.match(long, /acceptance truncated/);
+  assert.match(long, /omitted: constraints/);
 });
 
 test('worker contract is leaf-only and has no fake depth knobs', () => {
