@@ -291,7 +291,7 @@ conversation is not the layer.
 | Metric | What it proves | Target |
 |---|---|---|
 | Attention density | the conductor sees what the decision needs | packet share per turn plus payload share; behavior labels per run |
-| Main context growth (`b`) | execution detail stays out of the main context | below baseline on the same task shape; not demonstrated yet |
+| Main context growth (`b`) | execution detail stays out of the main context | below baseline on the same task shape; 38.0k vs 79.8k (−52%) in `n3-carded-01` |
 | Tool-schema share | conductor tool surface is small | <25% of main context |
 | Invalid envelope leak rate | contract enforcement works | 0 raw invalid blobs in main context |
 | Goal retention | conductor keeps the goal | correct restatement after compaction |
