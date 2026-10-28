@@ -393,14 +393,15 @@ function summarizeInjection(rows) {
   const turns = rows.length;
   if (!turns) {
     return {
-      turns: 0, packetAvg: null, relevantAvg: null, injectedAvg: null, ratio: null,
+      turns: 0, packetAvg: null, relevantAvg: null, injectedAvg: null, injectedSum: 0, ratio: null,
       density: null, anchorOnly: 0, modes: {}, withAction: 0, withOutcome: 0,
     };
   }
   const sum = (pick) => rows.reduce((total, row) => total + (typeof row[pick] === 'number' ? row[pick] : 0), 0);
   const packetAvg = Math.round(sum('packet') / turns);
   const relevantAvg = Math.round(sum('relevant') / turns);
-  const injectedAvg = Math.round(sum('injected') / turns);
+  const injectedSum = sum('injected');
+  const injectedAvg = Math.round(injectedSum / turns);
   const anchorOnly = rows.filter((row) => !String(row.changed || '').trim()).length;
   const modes = {};
   for (const row of rows) {
@@ -412,6 +413,7 @@ function summarizeInjection(rows) {
     packetAvg,
     relevantAvg,
     injectedAvg,
+    injectedSum,
     ratio: packetAvg ? Math.round((injectedAvg / packetAvg) * 1000) / 1000 : null,
     density: packetAvg ? Math.round((relevantAvg / packetAvg) * 1000) / 1000 : null,
     anchorOnly,

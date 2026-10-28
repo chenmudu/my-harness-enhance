@@ -128,6 +128,7 @@ test('summarizeMetrics reports injection size, ratio and packet density', () => 
   assert.equal(summary.injection.packetAvg, 120);
   assert.equal(summary.injection.relevantAvg, 100);
   assert.equal(summary.injection.injectedAvg, 30);
+  assert.equal(summary.injection.injectedSum, 60);
   assert.equal(summary.injection.ratio, 0.25);
   assert.equal(summary.injection.density, 0.833);
   assert.equal(summary.injection.anchorOnly, 1);

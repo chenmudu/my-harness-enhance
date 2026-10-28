@@ -10,7 +10,7 @@ proxy:
 
 | Quantity | Role | Status |
 | --- | --- | --- |
-| attention density | primary metric | packet share collected; payload share pending |
+| attention density | primary metric | packet share collected; payload share collected for the treatment arm |
 | `b` (growth per turn) | budget | collected per turn as `context_usage_ratio` × session window |
 | `M_T` (final main context) | window check | simulated only |
 | `B` (cumulative input) | cost | not collected |
@@ -103,10 +103,10 @@ report aggregates all entries and lists per-session counts.
 | `b` (growth per turn) | collected per turn | `context_usage_ratio` × window in `mhe ab` |
 | `B` (cumulative input) | not collected | needs per-turn context accounting |
 | `C` (billed cost) | collected per run | conductor plus `subagents/agent-*.jsonl` credits in `mhe ab` |
-| Composition | measured from the transcript | assistant / tool results / worker results |
+| Composition | measured from the transcript | assistant text / thinking / tool input / tool results / worker results |
 | Envelope / capsule tokens | collected | hook telemetry |
 | Behavior labels | collected per run | `behavior_label` rows written by `mhe ab` |
-| Attention density | packet share collected; payload share is a separate number | `prompt_submitted` packet/relevant/injected tokens |
+| Attention density | packet share and payload share collected | `prompt_submitted` packet/relevant/injected tokens and per-turn `context_tokens` |
 
 `density` is `relevant_tokens / packet_tokens`, where relevant means everything
 outside the PARKED and MORE sections. It says how much of the packet is about the
@@ -114,8 +114,9 @@ current decision; it does not say the model acted on it, which is what the
 behavior labels are for.
 
 The packet share covers only the injected delta; a request's payload is the whole
-conversation. Report both numbers: `density` (packet composition) and injected
-tokens over `context_tokens` (payload share). Provider input/output splits stay
+conversation. The A/B report prints both numbers: `density` (packet composition)
+and that turn's injected tokens over `context_tokens` (payload share). The baseline
+has no layer, so its share is not applicable, not zero. Provider input/output splits stay
 unavailable when the CLI zeroes those usage fields, and the report says so
 instead of inventing them.
 
@@ -281,7 +282,9 @@ nine dispatches carried a matching `task_id` and hash handshake. The extra cost
 is the worker session itself: 12-15 of 27-33 requests and 3.6-4.1 of 5.9-6.9
 credits per run. Removing all conductor overhead would still leave the worker
 loop, so the 2x wall and 1.25x billed-credit gates stay open as a property of
-delegation, not of conductor context.
+delegation, not of conductor context. The layer's payload share was 0.0079-0.0084
+per turn, 2.1-2.3% of the final context: the packet is dense, but most of the
+conversation is not the layer.
 
 ## Acceptance metrics
 
