@@ -2,91 +2,184 @@
 
 > 英文版本见 [README.md](README.md)。
 
-**一个面向长周期任务的、跨 harness 的控制面（control plane）。**
+**2026-10-29 归档，只读。** 这里留下的是一个问题的记录、一个能跑起来的
+实现，以及回答它的那次测量。代码不再维护，也不再处理 issue 或
+pull request。
 
-**主指标是注意力密度**：进入 conductor context 的内容里，
-当前决策真正需要的那个比例。
-context 增长速度是预算，
-token 成本是经济约束，不是目标；见 [docs/metrics.md](docs/metrics.md)。
+## 它是什么
 
-宿主 harness 仍然负责运行 agent：模型循环、工具运行时、会话、
-压缩、权限和子 agent 都保持原生。这一层位于它们之上，
-决定 conductor 看到什么、派发什么、什么算完成、度量什么；
-它不拥有模型循环，也不拥有工具运行时。
+`mhe` 是一个与 harness 无关的长程编码代理控制面。一个主会话充当
+conductor；实际的读取、修改和检查交给隔离的原生 worker；确定性检查
+取代第二轮 LLM 审计；持久状态放在工作区之外。宿主 harness 保留自己的
+模型循环、工具、会话、压缩和权限。这一层只决定 conductor 看到什么、
+哪些工作被派出去、以及什么算完成；它不拥有模型循环，也不拥有工具
+运行时，只是把判断、验收和度量放到宿主之上。
 
-它让主会话保持唯一的 conductor：主模型只判断、路由、验收、
-综合；调研、执行、验证、起草交给隔离的原生 worker。
-持久状态放在 workspace 之外，
-共享 brief + 确定性检查替代
-“先全部执行，再做一次 LLM 全量审计”的昂贵循环。
+前提很窄，而且可以被检验：代理会话的上下文只会增长，加进去的每个
+token 在做出下一次决策时仍然在那里，所以它的成本要在之后每一轮里
+再付一遍。如果能把执行细节挡在 conductor 的上下文之外、把决策留在
+里面，长程工作就会"增长得更慢"，而不只是"变得更长"。整个假设
+就是这一句，其余都是它的实现。
 
-它不是 harness 替代品，不是多 agent 框架，
-也不是第二套运行时。目标是让长周期任务
-比单会话全包更快、更可靠。
+## 问题
 
-## 它不是什么
+指标被命名为注意力密度：进入上下文的内容里，当前这次决策真正
+需要的比例。选它而不是"更少的 token"，是因为更少的 token
+不是一个目标：一个丢掉了"任务禁止触碰什么"这条约束的摘要，
+确实更小，也确实更差。增长速度被当作预算，计费成本被当作
+约束，因为这两者都能靠删掉模型需要的东西变好看。把预算当
+目标，指标就会奖励"看不见"，而不是"看得对"。
 
-- 不是新的 agent 框架，也不是 agent 社会。
-- 不是运行时：模型循环、工具执行、会话存储、压缩和权限都归宿主。
-- 不是 Qoder 专用工具：Qoder 是第一个验证通过的 adapter；ZCode 是第二个；Codex、DSH 及其他常用 agent harness 是 adapter 目标。
-- 不是目标仓库模板：状态和个人 agent 永不写入正在工作的项目仓库。
+## context 是怎么被观测的
 
-## 边界
+真正的工作在这里，可迁移的也是这一节。context 不能被直接观测。
+存在的只是一串模型请求：harness 每一步都重新渲染整个请求，所以
+增长的单位是一次请求，不是一轮用户输入；UI 里那串 transcript
+和真正发给模型的 payload 是两个不同的对象，混用它们就会得到
+彼此不可比的两组数。
 
-| 宿主 harness 负责 | mhe 负责 |
-|---|---|
-| 模型循环、工具运行时、会话、压缩、权限、子 agent | 策略、envelope 契约、capsule/状态、确定性检查、度量、adapter 映射 |
+用了三个来源，没有一个完整：
 
-## 核心模型
+- hook 遥测，只追加计数和体积（从不写 prompt、摘要或原始工具输出）
+  到 `metrics.jsonl`：模型、注入 token、packet 密度、派发与 job 结果、
+  压缩事件、被捕获的字节数。
+- CLI 会话 transcript，按条目类型求和，用来归因 payload：用户侧的
+  工具结果、hook 附件、助手文本、思考。
+- provider 返回的每次运行 credits，把 conductor 会话和每一份
+  `subagents/agent-*.jsonl` 加在一起。没有 worker 用量时标注为
+  `conductor-only`，因为那是另一个结论。
 
-- **一个 conductor**：唯一决策者；worker 隔离、无状态、不协商。
-- **fan-out 前先有 brief**：术语表、格式、输入 hash、ownership、检查项共享给每个 worker。
-- **验收前先检查**：结构、数字、hash、scope、测试检查由代码完成；全量语义审计只在失败或歧义时触发。
-- **状态在 workspace 之外**：持久状态在 `~/.my-harness-enhance/`；个人 agent 在 repo/用户级 overlay，安装到用户级 harness 配置。
+有三件事曾让更早的数字出错，这也是为什么被写下来的是方法而不只是
+结论：
 
-## Adapter
+- 模型自报的比例（`context_usage_ratio`）分母是 CLI 按会话解析出来的
+  窗口：认得出模型时 200,000，回退时 1,048,576。同一份 payload
+  可以读出五倍的差，只因为它落进了不同的分母，和内容本身无关。
+  所以两个 arm 都固定到同一个显式窗口，逐轮上下文按
+  `context_tokens = ratio * window` 存；两个 arm 仍然不一致时，
+  这次运行被标记为不可比，比例作废。
+- 每轮重启 CLI 的运行会重复触发 `SessionStart`，一个 15 轮的任务里
+  conductor 策略加 capsule 进了 29 次 transcript，其中 29.1k token
+  是真实会话根本不会付的重启开销。
+- token 估算器是故意粗糙的（中文约 0.6 token/字，其他非空白字符约
+  0.28），它只能和自己比。
 
-- **Qoder**：第一个验证通过的 adapter（hooks、MCP、原生 subagent）。
-- **ZCode**：第二个 adapter；原生 subagent、hooks、MCP、conductor 注入。支持项目级和全局模式；`reason` 使用内置 `Explore` 的只读兼容模式（ZCode 没有 no-tools agent）；派发时必须内嵌 worker contract，并用 synthetic job 补偿缺失的 SubagentStop。原生没有 result rewrite。
-- **Codex、DSH 及其他常用 agent harness**：adapter 目标。核心 contract、brief、检查和状态与 harness 无关。
-- Adapter 契约与能力矩阵：[docs/adapters.md](docs/adapters.md)。Qoder 专属细节在 [docs/qoder-adapter.md](docs/qoder-adapter.md)；它描述第一个 adapter，不是仓库边界。
+观测仍然看不见的东西：hook 看不到完整的主上下文，
+所以 `agent_result.compact_tokens` 只是"派发进入主上下文多少"
+的代理量；累计输入 `B` 从来没有被采集；provider 的输入/输出拆分
+有时被 CLI 清零；worker 的行为也看不到，因为 transcript 记录的是
+conductor 的工具调用，不是 worker 的。
 
-## 状态
+## 测了什么
 
-- **全套测试在 Windows 上通过**；CI 已在 macOS 与 Linux 上跑这套测试，但这两个平台还没有人工跑过。
-- Qoder 已在只读、写、验证会话上端到端验证；
-  同一 workspace 下的两个并发会话各自持有独立的状态分片。
-- ZCode adapter 已实现项目级和全局模式；
-  `reason` 使用只读 Explore 兼容模式，worker contract 强制内嵌，
-  synthetic job 补偿 SubagentStop。
-  原生仍没有 result rewrite/SubagentStop/PreCompact。
-- **机制已验证；主指标现在有两个数。**
-  packet 密度、payload 占比与行为标签都已逐轮采集；
-  A/B 把两个 arm 固定在同一窗口，因此 context tokens 可比；
-  payload 占比只有 treatment 有，baseline 没有这一层，
-  它衡量的是这一层在整段对话里的份额，不是 packet 本身。
-- **什么时候划算。** 目前还不划算。只算 conductor 时，3 轮的 500 行与 2,000 行
-  输入是 baseline 的 1.7 倍和 1.4 倍，15 轮是 0.83 倍；把 worker 的 transcript
-  加回来，已测的每个形状都变成亏损（2.91x、2.22x、2.49x、1.43x，
-  task card 策略下 1.74x）。
-  省下来的确实是"留在 conductor 里的内容"，但还覆盖不了 worker 成本。
-  数字与前提见 [docs/metrics.zh-CN.md](docs/metrics.zh-CN.md)。
-- 待验证：不重启 CLI 的 wall-clock 对比、并发代码集成冲突、
-  长周期压缩、Codex/DSH adapter。
+一种任务形状，两个 arm 固定在同一窗口，每格三次运行，treatment
+侧把 worker 的 transcript 一并计入。
 
-## 文档
+| 指标 | Baseline | Treatment |
+| --- | --- | --- |
+| 任务结束时 conductor 上下文 | 79,829 | 38,043 |
+| 确定性检查通过 | 3/3 | 3/3 |
+| 下一步动作正确 | 9/9 | 8/9 |
+| credits（含 worker） | 3.84 | 6.68 |
+| wall clock（分钟） | 1.3 | 4.4 |
 
-- [docs/README.md](docs/README.md) — 文档地图与权威顺序。
-- [INSTALL.md](INSTALL.md) — Qoder 与 ZCode 安装及回滚 runbook。
-- [docs/architecture.md](docs/architecture.md) — 架构与不变量。
-- [docs/state.md](docs/state.zh-CN.md) — 状态文件、hook 注入与任务生命周期。
-- [docs/adapters.md](docs/adapters.md) — adapter 契约与能力矩阵。
-- [docs/worktrees.md](docs/worktrees.md) — 代码任务的隔离 git worktree。
-- [docs/brief-checks.md](docs/brief-checks.md) — 共享 brief 与确定性检查。
-- [docs/retention.md](docs/retention.md) — 保留期限与垃圾回收。
-- [overlays/README.md](overlays/README.md) — 个人 agent overlay 与安全安装/卸载。
-- [docs/roadmap.md](docs/roadmap.md) — adapter 与控制面路线图。
-- 运行记录留在本机 `docs/others/`；它们是证据，不是文档。
+同一个机制，在三种 patch 规模和两种时间跨度下测量，方向会随"本来
+会在上下文里停留多少内容"而反转：
+
+| patch 行数 | 轮数 | credits baseline | credits treatment | 比值 |
+| ---: | ---: | ---: | ---: | ---: |
+| 491 | 3 | 1.80 | 3.11 | 1.73x |
+| 1,931 | 3 | 3.37 | 4.84 | 1.44x |
+| 7,691 | 3 | 4.03 | 3.28 | 0.81x |
+| 1,931 | 15 | 23.66 | 19.59 | 0.83x |
+
+这些格是更早的策略下测的，而且只算 conductor 的 credits；把 worker
+的 transcript 加回去，每一格都变成亏损。方法与前提：
+[docs/metrics.zh-CN.md](docs/metrics.zh-CN.md)。
+
+## 这些数字支持什么
+
+机制成立。conductor 的上下文减半，它依然能说出正确的下一步；
+没有任何检查退化。这不是压缩：conductor 从来没有持有文件内容，
+因为它从来不允许读取它们。省下来的是权限收缩加结果压缩，而且
+这笔节省是真的——15 轮里累计进入上下文的 patch 是 98.5k token
+对 13.3k。
+
+但这份节省覆盖不了它自己的成本。每个 worker 都要冷启动一次约
+23.8k token 的 system 与工具前缀，然后跑自己的循环；worker 会话
+占 27-33 次请求里的 12-15 次，5.9-6.9 credits 里的 3.6-4.1。
+把 conductor 的开销全部去掉，成本仍然在 baseline 之上。
+
+这个交换是有条件的，不是常数。把一步本来会往主上下文塞进 `C`
+个 token、并停留 `k` 轮的活派出去，信封是 `e`、worker 前缀是 `W`，
+只有 `C * (k - 1) > e * k + W` 时才打平。太小或太靠后的步骤
+亏一个数量级。上面那张交叉表就是这个不等式在工作，不是对它
+的反驳。
+
+## 为什么归档
+
+机制层实际已经被商品化。harness 原生就有 subagent、worktree、压缩、
+权限模式和计划状态，编排模式也已经在采用度高得多的仓库里公开。
+再把它们重述一遍，增加的是风险，不是能力，也不是任何不可替代的
+位置。
+
+设计自己的边界逼出了最贵的那个答案。它拒绝改动宿主循环，只做
+上下文注入，于是派发成了让 conductor 增长变慢的唯一杠杆——
+而派发恰恰是那个不划算的杠杆。边界画得越干净，代价越集中到
+这一处。
+
+剩下的缺口是真相，不是容量。模型会持续吸收上下文管理的问题，
+但不会吸收"这件事到底做完了没有"，因为后者需要从世界里取回
+证据。那是一个 benchmark 和一套验证纪律；在控制面里建它，
+得到的只会是一个更聪明的 demo，而不是一个能回答"做完了没"
+的系统。
+
+## 还剩什么：衡量与观测 context
+
+如果这里还有什么值得继续做，那是观测问题，不是这一层。
+归档让这件事变得具体：上面那些数字需要一个专门的 runner、
+三个来源、一个固定窗口，以及一份手写的"这次测量看不见
+什么"的清单。那套装置才是资产；控制面只是它的第一个
+消费者，换掉控制面，装置照样有用。
+
+缺的东西，按重要性排：
+
+- 没有一个 context 增长的计量单位能跨 harness 存活。请求、轮、
+  会话、窗口是四个不同的分母，跨着它们比较就是上面那个五倍误差。
+  一个可移植的度量必须以请求为单位，把解析出来的窗口写成显式
+  字段，并且拒绝在窗口不一致时给出比值；否则它就不是一次测量，
+  只是一次读数。
+- 观测和被观测的对象纠缠在一起。hook 看不到渲染后的请求，
+  transcript 是它的一次有损投影，provider 的 usage 字段有时被清零。
+  任何声称"逐轮上下文"的东西都必须说明它读的是哪个来源、
+  哪个来源读不到。
+- 密度没有消费侧信号。一个 packet 可以很密，同时被完全忽略；
+  只有行为与结果能说明它有没有被用上，而这里的行为标签只覆盖
+  conductor。
+- 没有衡量"长程退化"的 benchmark。现有的都在给终点打分，于是
+  一个能稳住四十轮、在第六十轮崩掉的层，和一个从来没有起作用的
+  层得分一样。在它出现之前，所有关于长期任务的结论都是从短跑
+  里推出来的。
+
+## 还值得读的部分
+
+- [docs/metrics.zh-CN.md](docs/metrics.zh-CN.md) — 完整的方法：采集
+  什么、arm 如何固定、什么情况下一次运行只算 smoke test、为什么
+  credits 必须把 conductor 和每份 worker transcript 加在一起。
+- [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) — 分层
+  模型，以及让运行一个控制面变得安全的那些不变量。
+- [src/core/checks.mjs](src/core/checks.mjs) — 确定性验收：输入
+  hash、scope、命令白名单、要么全成要么全退的 land。
+- [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md) — 计划过但从未建成的部分。
+
+## 可以改用
+
+| 需要 | 改用 |
+| --- | --- |
+| 把模糊想法变成规格 | [spec-kit](https://github.com/github/spec-kit) 或 [OpenSpec](https://github.com/Fission-AI/OpenSpec) |
+| 上下文丢失后仍能继续的工作 | [planning-with-files](https://github.com/OthmanAdi/planning-with-files) |
+| 强制的计划与检查回路 | [superpowers](https://github.com/obra/superpowers) |
+| 判断工作是否真的完成 | 仓库里的可执行检查，在 stop gate 运行 |
 
 ## License
 
